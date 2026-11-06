@@ -1,0 +1,10 @@
+{
+  "name": "count-trainer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "sim": "node scripts/sim.mjs",
+    "index-check": "node scripts/index-check.mjs"
+  }
+}

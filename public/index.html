@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>True Count</title>
+  <meta name="description" content="Practice Hi-Lo card counting at a solo blackjack table, with every deviation explained.">
+  <meta name="theme-color" content="#0d1412">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='2' width='20' height='28' rx='3' fill='%23fbf6ea'/><text x='16' y='23' font-size='18' text-anchor='middle' fill='%23a3211b'>%E2%99%A5</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>True Count</h1>
+    <div class="top-actions">
+      <button class="ghost" id="toggleCount" aria-pressed="false">Show count</button>
+      <button class="ghost" id="openLearn">Learn</button>
+      <button class="ghost" id="openSettings">Settings</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="play" aria-label="Blackjack table">
+      <div class="rail">
+        <div class="felt">
+          <div class="tray" id="tray" aria-label="Discard tray"></div>
+          <div class="shoe" id="shoe"></div>
+          <div class="countchip" id="countchip" hidden></div>
+
+          <div class="zone dealer" id="dealer"></div>
+
+          <svg class="arc" viewBox="0 0 600 120" aria-hidden="true">
+            <path id="arc1" d="M 40 14 Q 300 104 560 14" fill="none"/>
+            <path id="arc2" d="M 90 46 Q 300 118 510 46" fill="none"/>
+            <text class="arc-main"><textPath href="#arc1" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
+            <text class="arc-sub"><textPath href="#arc2" startOffset="50%" text-anchor="middle">DEALER STANDS ON ALL 17s</textPath></text>
+          </svg>
+
+          <div class="zone player" id="player"></div>
+        </div>
+      </div>
+      <div class="controls" id="controls"></div>
+    </section>
+
+    <aside class="coach" aria-label="Coach">
+      <div class="scores" id="scores"></div>
+      <div class="feed" id="feed" aria-live="polite"></div>
+    </aside>
+  </main>
+
+  <dialog id="learn" class="sheet wide">
+    <div class="sheet-head"><h2>How to count</h2><button class="ghost" data-close>Close</button></div>
+    <div id="learnBody"></div>
+  </dialog>
+
+  <dialog id="settings" class="sheet">
+    <div class="sheet-head"><h2>Settings</h2><button class="ghost" data-close>Close</button></div>
+    <div id="settingsBody"></div>
+  </dialog>
+
+  <dialog id="shoeEnd" class="sheet">
+    <div class="sheet-head"><h2>Cut card reached</h2></div>
+    <div id="shoeEndBody"></div>
+  </dialog>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
