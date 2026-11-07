@@ -1,6 +1,6 @@
 import {
   Game, BETS, DEVIATIONS, INSURANCE_INDEX, DECK_POOL, MARGIN,
-  explain, explainBet, handValue, ruleName, signed, upLabel,
+  explain, explainBet, handValue, ruleName, signed, upLabel, makeDrill, gradeDrill,
 } from './engine.js';
 
 const STORE = 'true-count-v1';
@@ -15,12 +15,13 @@ function load() {
   try { return JSON.parse(localStorage.getItem(STORE)) ?? {}; } catch { return {}; }
 }
 const saved = load();
-const settings = { deckMode: 'random', surrender: false, every: 3, showCount: false, ...saved.settings };
+const settings = { deckMode: 'random', surrender: false, every: 3, showCount: false, drillTrue: false, ...saved.settings };
+const drillStats = { ...saved.drill }; // spot id -> [right, asked]
 const stats = { ...blankStats(), ...saved.stats };
 let shoeStats = blankStats();
 
 function save() {
-  try { localStorage.setItem(STORE, JSON.stringify({ settings, stats })); } catch { /* private window */ }
+  try { localStorage.setItem(STORE, JSON.stringify({ settings, stats, drill: drillStats })); } catch { /* private window */ }
 }
 
 const game = new Game({ deckMode: settings.deckMode, surrender: settings.surrender });
@@ -284,6 +285,90 @@ function shuffleNewShoe() {
   render();
 }
 
+/* ---------- deviation drill ---------- */
+
+const drill = { cur: null, picked: null, result: null, right: 0, asked: 0, fresh: false };
+const DRILL_LABELS = { ...LABELS, take: ['Take insurance', 'Y'], decline: ['No insurance', 'N'] };
+
+// Spots you miss come up more often. Unseen spots get a small bump so every one shows up early.
+function drillWeight(spot) {
+  const [ok, n] = drillStats[spot.id] ?? [0, 0];
+  return n ? 1 + (3 * (n - ok)) / n : 1.5;
+}
+
+function nextDrill() {
+  drill.cur = makeDrill({ surrender: settings.surrender, weight: drillWeight });
+  drill.picked = null;
+  drill.result = null;
+  drill.fresh = true;
+  renderDrill();
+}
+
+function answerDrill(choice) {
+  const d = drill.cur;
+  if (!d || drill.result || !d.options.includes(choice)) return;
+  drill.picked = choice;
+  drill.result = gradeDrill(d, choice);
+  drill.asked += 1;
+  if (drill.result.ok) drill.right += 1;
+  const s = drillStats[d.spot.id] ?? [0, 0];
+  drillStats[d.spot.id] = [s[0] + (drill.result.ok ? 1 : 0), s[1] + 1];
+  save();
+  renderDrill();
+}
+
+function weakest() {
+  return Object.entries(drillStats)
+    .filter(([, [ok, n]]) => n >= 2 && ok < n)
+    .sort((a, b) => (a[1][0] / a[1][1]) - (b[1][0] / b[1][1]))
+    .slice(0, 3)
+    .map(([id, [ok, n]]) => {
+      const r = DEVIATIONS.find((x) => x.id === id);
+      return `${r ? ruleName(r) : 'Insurance'} (${ok} of ${n})`;
+    });
+}
+
+function renderDrill() {
+  const d = drill.cur;
+  $('drillScore').textContent = drill.asked ? `${drill.right} of ${drill.asked}` : '';
+  const count = settings.drillTrue
+    ? `<div class="stat"><b>${signed(d.tc, 1)}</b><span>True count</span></div>`
+    : `<div class="stat"><b>${signed(d.rc)}</b><span>Running count</span></div><div class="stat"><b>${d.decksLeft.toFixed(1)}</b><span>Decks left</span></div>`;
+  const done = Boolean(drill.result);
+  const buttons = d.options.map((o) => {
+    const cls = !done ? '' : o === d.answer ? 'right' : o === drill.picked ? 'wrong' : '';
+    return `<button class="act ${cls}" data-drill="${o}" ${done ? 'disabled' : ''}>${DRILL_LABELS[o][0]}<kbd>${DRILL_LABELS[o][1]}</kbd></button>`;
+  }).join('');
+  const n = drill.result?.note;
+  const feedback = n
+    ? `<article class="note big ${n.tone}"><div class="tag">${n.tag}</div><h3>${n.title}</h3>${n.lines.map((l) => `<p>${l}</p>`).join('')}</article>
+       <div class="drill-next"><button class="act primary" id="drillNext">Next<kbd>Enter</kbd></button></div>`
+    : '';
+  const weak = weakest();
+  const deal = drill.fresh ? 'new' : '';
+  drill.fresh = false;
+  $('drillBody').innerHTML = `
+    <div class="drill-felt">
+      <div class="drill-count">${count}</div>
+      <div class="drill-hands">
+        <div class="drill-hand"><span>Dealer</span><div class="cards">${cardHtml(d.up, 0, deal)}</div></div>
+        <div class="drill-hand"><span>You</span><div class="cards">${d.player.map((c, i) => cardHtml(c, (i + 1) * STAGGER, deal)).join('')}</div></div>
+      </div>
+    </div>
+    <div class="controls">${buttons}</div>
+    ${feedback}
+    <div class="drill-foot">
+      <label class="field">Give the true count<input type="checkbox" id="setDrillTrue" ${settings.drillTrue ? 'checked' : ''}></label>
+      ${weak.length ? `<p class="drill-weak">Missed most: ${weak.join(', ')}</p>` : ''}
+    </div>`;
+  if (done) $('drillNext').focus({ preventScroll: true });
+}
+
+function openDrill() {
+  nextDrill();
+  $('drill').showModal();
+}
+
 /* ---------- learn and settings ---------- */
 
 function renderLearn() {
@@ -339,7 +424,10 @@ function renderSettings() {
 document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
   if (!t) return;
-  if (t.dataset.act) play(t.dataset.act);
+  if (t.dataset.drill) answerDrill(t.dataset.drill);
+  else if (t.id === 'drillNext') nextDrill();
+  else if (t.id === 'openDrill') openDrill();
+  else if (t.dataset.act) play(t.dataset.act);
   else if (t.dataset.ins) insurance(t.dataset.ins === 'yes');
   else if (t.dataset.bet) { ui.bet = Number(t.dataset.bet); renderControls(); }
   else if ('deal' in t.dataset) deal();
@@ -370,11 +458,19 @@ document.addEventListener('change', (e) => {
   if (id === 'setDecks') settings.deckMode = value === 'random' ? value : Number(value);
   else if (id === 'setEvery') settings.every = Number(value);
   else if (id === 'setSurrender') { settings.surrender = checked; renderControls(); }
+  else if (id === 'setDrillTrue') { settings.drillTrue = checked; save(); renderDrill(); return; }
   else return;
   save();
 });
 
 document.addEventListener('keydown', (e) => {
+  if ($('drill').open && !e.metaKey && !e.ctrlKey && e.target.tagName !== 'INPUT') {
+    const k = e.key.toLowerCase();
+    const map = { h: 'hit', s: 'stand', d: 'double', p: 'split', r: 'surrender', y: 'take', n: 'decline' };
+    if (drill.result && (k === 'enter' || k === ' ')) { e.preventDefault(); nextDrill(); }
+    else if (map[k]) answerDrill(map[k]);
+    return;
+  }
   if (document.querySelector('dialog[open]') || e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey) return;
   const k = e.key.toLowerCase();
   const keyMap = { h: 'hit', s: 'stand', d: 'double', p: 'split', r: 'surrender' };

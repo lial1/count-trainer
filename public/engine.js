@@ -564,3 +564,107 @@ export function explainBet(e) {
     lines: [countLine(e), 'Ramp: 1u below +2, then 2u at +2, 4u at +3, 8u at +4, 12u at +5 or higher.'],
   };
 }
+
+/* ---------- deviation drill ---------- */
+
+const TEN_RANKS = ['10', 'J', 'Q', 'K'];
+const pick = (arr, rng) => arr[Math.floor(rng() * arr.length)];
+const rankFor = (v, rng) => (v === 11 ? 'A' : v === 10 ? pick(TEN_RANKS, rng) : String(v));
+const drillCard = (v, rng) => ({ id: `d${rng()}`, rank: rankFor(v, rng), suit: pick(SUITS, rng) });
+
+// Two different values from 2 to 10 that add up to a hard total, so the hand is never a pair or soft.
+function hardSplits(total) {
+  const out = [];
+  for (let a = 2; a <= 10; a += 1) {
+    const b = total - a;
+    if (b > a && b <= 10) out.push([a, b]);
+  }
+  return out;
+}
+
+function drillContext(rule, surrender) {
+  const pair = rule.group === 'pair';
+  return {
+    total: rule.total,
+    soft: false,
+    pairValue: pair ? 10 : null,
+    up: rule.up,
+    canDouble: true,
+    canSplit: pair,
+    canSurrender: surrender,
+  };
+}
+
+// Every spot the drill can ask about with these rules: the deviations that really apply, plus insurance.
+export function drillSpots({ surrender = false } = {}) {
+  const spots = DEVIATIONS.filter((r) => findRule(drillContext(r, surrender)) === r)
+    .map((r) => ({ id: r.id, rule: r, index: r.index }));
+  return [...spots, { id: 'insurance', rule: null, index: INSURANCE_INDEX }];
+}
+
+export const spotName = (s) => (s.rule ? ruleName(s.rule) : 'Insurance');
+
+// A scenario near one index: a hand, a dealer upcard, and a count that is clearly on one side of it.
+// `weight(spot)` lets the app lean toward spots you keep missing.
+export function makeDrill({ surrender = false, rng = Math.random, weight = () => 1 } = {}) {
+  const spots = drillSpots({ surrender });
+  const weights = spots.map((s) => Math.max(0.01, weight(s)));
+  let roll = rng() * weights.reduce((a, b) => a + b, 0);
+  let spot = spots[spots.length - 1];
+  for (let i = 0; i < spots.length; i += 1) {
+    roll -= weights[i];
+    if (roll < 0) { spot = spots[i]; break; }
+  }
+
+  // Half deck steps from 1 to 6, the way you would read the tray. Running count is a whole number.
+  let decksLeft;
+  let rc;
+  let tc;
+  do {
+    decksLeft = 1 + Math.floor(rng() * 11) / 2;
+    const side = rng() < 0.5 ? -1 : 1;
+    const target = spot.index + side * (MARGIN + rng() * 3);
+    rc = Math.round(target * decksLeft);
+    tc = rc / decksLeft;
+  } while (Math.abs(tc - spot.index) < MARGIN || Math.abs(tc) > 9);
+
+  if (!spot.rule) {
+    const total = pick([12, 13, 14, 15, 16, 17, 18, 19], rng);
+    const [x, y] = pick(hardSplits(total), rng);
+    const take = tc >= INSURANCE_INDEX;
+    return {
+      kind: 'insurance', spot, rc, decksLeft, tc,
+      player: [drillCard(x, rng), drillCard(y, rng)], up: drillCard(11, rng),
+      options: ['take', 'decline'], answer: take ? 'take' : 'decline',
+    };
+  }
+
+  const r = spot.rule;
+  const ctx = drillContext(r, surrender);
+  const [x, y] = r.group === 'pair' ? [10, 10] : pick(hardSplits(r.total), rng);
+  const rec = recommend(ctx, tc);
+  const options = ['hit', 'stand', 'double', ...(ctx.canSplit ? ['split'] : []), ...(surrender ? ['surrender'] : [])];
+  return {
+    kind: 'play', spot, rc, decksLeft, tc, ctx,
+    player: [drillCard(x, rng), drillCard(y, rng)], up: drillCard(r.up, rng),
+    options, answer: rec.action, rec,
+  };
+}
+
+export function gradeDrill(d, chosen) {
+  const ok = chosen === d.answer;
+  const base = { tc: d.tc, rc: d.rc, decksLeft: d.decksLeft };
+  if (d.kind === 'insurance') {
+    const lines = [
+      countLine(base),
+      `Index: take it at ${signed(INSURANCE_INDEX)} or higher.`,
+      'Insurance pays 2 to 1, so it only pays off on average when more than a third of unseen cards are tens. Below the index they are not.',
+    ];
+    const title = ok
+      ? `${d.answer === 'take' ? 'Take insurance' : 'Decline insurance'}: correct`
+      : d.answer === 'take' ? 'Take insurance: the count is past the index' : 'Decline insurance: the count is not there';
+    return { ok, note: { tone: ok ? 'good' : 'bad', tag: 'Insurance', title, lines } };
+  }
+  const note = explain({ type: 'play', ...base, ctx: d.ctx, chosen, ...d.rec, ok, close: false });
+  return { ok, note };
+}

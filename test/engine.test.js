@@ -178,3 +178,35 @@ test('every explanation renders without undefined', () => {
     while (g.phase === 'play') { const l = g.legalActions(); check(g.act(l[i % l.length])); }
   }
 });
+
+test('drill scenarios are real deviations with a clear answer', async () => {
+  const { makeDrill, drillSpots, gradeDrill, findRule, MARGIN: M } = await import('../public/engine.js');
+  let seed = 7;
+  const rng = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  for (const surrender of [false, true]) {
+    const ids = drillSpots({ surrender }).map((s) => s.id);
+    assert.ok(ids.includes('insurance'));
+    if (!surrender) assert.equal(ids.length, 18);
+    const sides = new Map();
+    for (let i = 0; i < 3000; i += 1) {
+      const d = makeDrill({ surrender, rng });
+      assert.ok(Math.abs(d.tc - d.spot.index) >= M);
+      assert.ok(Number.isInteger(d.rc));
+      assert.ok(d.options.includes(d.answer));
+      if (d.kind === 'play') {
+        assert.equal(findRule(d.ctx), d.spot.rule);
+        assert.equal(d.ctx.total, handValue(d.player).total);
+        assert.equal(d.ctx.up, handValue([d.up]).total);
+      }
+      const g = gradeDrill(d, d.answer);
+      assert.ok(g.ok);
+      assert.ok(!JSON.stringify(g.note).includes('undefined'));
+      assert.ok(!gradeDrill(d, d.options.find((o) => o !== d.answer)).ok);
+      const s = sides.get(d.spot.id) ?? new Set();
+      s.add(d.answer);
+      sides.set(d.spot.id, s);
+    }
+    for (const [id, s] of sides) assert.equal(s.size, 2, `${id} should show both sides`);
+    assert.equal(sides.size, ids.length);
+  }
+});

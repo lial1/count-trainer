@@ -14,6 +14,7 @@
     <h1>True Count</h1>
     <div class="top-actions">
       <button class="ghost" id="toggleCount" aria-pressed="false">Show count</button>
+      <button class="ghost" id="openDrill">Drill</button>
       <button class="ghost" id="openLearn">Learn</button>
       <button class="ghost" id="openSettings">Settings</button>
     </div>
@@ -51,6 +52,11 @@
   <dialog id="learn" class="sheet wide">
     <div class="sheet-head"><h2>How to count</h2><button class="ghost" data-close>Close</button></div>
     <div id="learnBody"></div>
+  </dialog>
+
+  <dialog id="drill" class="sheet wide">
+    <div class="sheet-head"><h2>Deviation drill</h2><span class="drill-score" id="drillScore"></span><button class="ghost" data-close>Close</button></div>
+    <div id="drillBody"></div>
   </dialog>
 
   <dialog id="settings" class="sheet">
