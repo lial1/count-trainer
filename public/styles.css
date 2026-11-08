@@ -102,11 +102,12 @@ button:disabled { cursor: default; opacity: .4; }
 
 /* coach */
 .coach { display: flex; flex-direction: column; gap: 10px; min-width: 0; position: sticky; top: 10px; max-height: calc(100vh - 20px); }
-.scores { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.scores { flex-shrink: 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .score { padding: 8px 4px; background: var(--panel); text-align: center; }
 .score b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
 .score span { font-size: 11px; color: var(--muted); }
-.feed { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.feed { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; }
+.feed > * { flex-shrink: 0; }
 .note { padding: 10px 12px; border-radius: 10px; background: var(--panel); border-left: 3px solid var(--line); }
 .note.good { border-left-color: var(--good); }
 .note.bad { border-left-color: var(--bad); }
