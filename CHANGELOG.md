@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-07
+- Fixed the score bar labels (Plays, Deviations, Count, Bets, Units) getting cut off once the coach feed filled up; the feed now scrolls under a full-size score bar.
 - Added a deviation drill (Drill button): a hand, a dealer upcard, and a running count with decks left, never within 0.5 of the index so each answer is clear. Covers the Illustrious 18, plus the Fab 4 when late surrender is on.
 - Spots you miss come up more often. Per-spot results are saved in the browser, and the three weakest show under the drill.
 
