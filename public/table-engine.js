@@ -22,7 +22,7 @@ function wholeDollars(n, what) {
   return v;
 }
 
-export const DEFAULTS = { bankName: 'Bank', decks: 6, pen: 0.75, minBet: 5, maxBet: 100, stopLoss: 500, surrender: false };
+export const DEFAULTS = { bankName: 'Bank', decks: 6, pen: 0.75, minBet: 5, maxBet: 100, stopLoss: 500, surrender: false, maxPlayers: 4 };
 
 export function cleanConfig(c = {}) {
   const cfg = { ...DEFAULTS, ...c };
@@ -34,6 +34,7 @@ export function cleanConfig(c = {}) {
   if (cfg.maxBet < cfg.minBet) throw new Error('Max bet has to be at least the min bet');
   cfg.stopLoss = wholeDollars(cfg.stopLoss, 'Stop loss');
   cfg.surrender = Boolean(cfg.surrender);
+  cfg.maxPlayers = Math.min(MAX_SEATS, Math.max(1, Math.round(Number(cfg.maxPlayers)) || 4));
   return cfg;
 }
 
@@ -51,6 +52,7 @@ export class TableGame {
     this.closed = false;
     this.closeReason = '';
     this.paused = false;
+    this.pauseAfter = false;
     this.closeAfter = false;
     this.shoeNo = 0;
     this.requests = [];
@@ -128,7 +130,7 @@ export class TableGame {
       return existing;
     }
     if (!clean) throw new Error('Put in a name');
-    if (this.players.length >= MAX_SEATS) throw new Error('The table is full');
+    if (this.players.length >= this.cfg.maxPlayers) throw new Error('The table is full');
     if (this.players.some((x) => x.name.toLowerCase() === clean.toLowerCase())) throw new Error('Someone already has that name');
     const amount = wholeDollars(buyIn, 'Buy-in');
     const p = { pid, name: clean, stack: 0, buyIns: 0, cashOuts: 0, status: 'none', wager: 0, lastWager: 0, hands: [], ins: null, insBet: 0, lastNet: null };
@@ -146,7 +148,7 @@ export class TableGame {
     const clean = seated ? seated.name : String(name || '').trim().slice(0, 20);
     if (!clean) throw new Error('Put in a name');
     if (!seated) {
-      if (this.players.length >= MAX_SEATS) throw new Error('The table is full');
+      if (this.players.length >= this.cfg.maxPlayers) throw new Error('The table is full');
       if (this.players.some((x) => x.name.toLowerCase() === clean.toLowerCase())) throw new Error('Someone already has that name');
     }
     if (v > MAX_BUY_IN) throw new Error(`Buy-ins top out at ${money(MAX_BUY_IN)}`);
@@ -230,9 +232,16 @@ export class TableGame {
     return p.stack >= this.cfg.minBet || p.status === 'bet';
   }
 
-  // Bank: hold off dealing. A hand in progress plays out; bets can still go in.
+  // Bank: hold off dealing. Mid-hand, everyone is warned and the pause starts once the hand is paid.
+  // Bets can still go in while paused.
   setPaused(on) {
     this.open();
+    if (on && this.inRound) {
+      this.pauseAfter = true;
+      this.note('The bank is pausing after this hand.');
+      return;
+    }
+    this.pauseAfter = false;
     this.paused = Boolean(on);
     this.note(this.paused ? 'The bank paused the game.' : 'The bank resumed the game.');
     this.maybeDeal();
@@ -456,6 +465,11 @@ export class TableGame {
     this.phase = 'betting';
     if (this.bankNet <= -this.cfg.stopLoss) this.close(`Stop loss hit: the bank is down ${money(-this.bankNet)}.`);
     else if (this.closeAfter) this.close();
+    else if (this.pauseAfter) {
+      this.pauseAfter = false;
+      this.paused = true;
+      this.note('The bank paused the game.');
+    }
   }
 
   close(reason = 'The bank closed the table.') {
@@ -481,10 +495,11 @@ export class TableGame {
     if (this.phase === 'peel' && !this.players.some((p) => p.hands.some((x) => x.down))) this.payout();
   }
 
-  setLimits({ minBet, maxBet, stopLoss }) {
+  // Lowering max players never unseats anyone; it only stops new people sitting down.
+  setLimits({ minBet, maxBet, stopLoss, maxPlayers = this.cfg.maxPlayers }) {
     if (this.inRound) throw new Error('Change limits between hands');
-    this.cfg = cleanConfig({ ...this.cfg, minBet, maxBet, stopLoss });
-    this.note(`Bank set bets ${money(this.cfg.minBet)} to ${money(this.cfg.maxBet)}, stop loss ${money(this.cfg.stopLoss)}.`);
+    this.cfg = cleanConfig({ ...this.cfg, minBet, maxBet, stopLoss, maxPlayers });
+    this.note(`Bank set bets ${money(this.cfg.minBet)} to ${money(this.cfg.maxBet)}, stop loss ${money(this.cfg.stopLoss)}, up to ${this.cfg.maxPlayers} players.`);
   }
 
   // Who Zelles whom if everyone cashed out now. Chips on the table count at face value.
@@ -508,6 +523,7 @@ export class TableGame {
       closed: this.closed,
       closeReason: this.closeReason,
       paused: this.paused,
+      pauseAfter: this.pauseAfter,
       closeAfter: this.closeAfter,
       dealer: hidden ? [this.dealer[0], { hidden: true, id: `h${this.round}` }] : this.dealer,
       turn: this.turn,

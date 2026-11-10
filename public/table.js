@@ -108,6 +108,7 @@ function lobbyCreate() {
         <div><label for="cDecks">Decks</label><select class="in" id="cDecks">${opt([1, 2, 4, 6, 8], cfg.decks, (d) => `${d} deck${d > 1 ? 's' : ''}`)}</select></div>
         <div><label for="cPen">Deck penetration</label><select class="in" id="cPen">${opt([0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9], cfg.pen, (p) => `${Math.round(p * 100)}%`)}</select></div>
       </div>
+      <label for="cSeats">Max players</label><select class="in" id="cSeats">${opt([1, 2, 3, 4, 5, 6], cfg.maxPlayers, (n) => `${n} player${n > 1 ? 's' : ''}`)}</select>
       <label class="check-row"><input type="checkbox" id="cSurr" ${cfg.surrender ? 'checked' : ''}> Late surrender</label>
       <button class="act primary" type="submit">Create game</button>
       <p class="err" id="createErr"></p>
@@ -121,7 +122,7 @@ function createGame() {
     if (!name) throw new Error('Put in your name');
     cfg = cleanConfig({
       bankName: name, minBet: $('cMin').value, maxBet: $('cMax').value, stopLoss: $('cStop').value,
-      decks: $('cDecks').value, pen: $('cPen').value, surrender: $('cSurr').checked,
+      decks: $('cDecks').value, pen: $('cPen').value, surrender: $('cSurr').checked, maxPlayers: $('cSeats').value,
     });
   } catch (e) { $('createErr').textContent = e.message; return; }
   store.set('tc-last-cfg', cfg);
@@ -397,9 +398,7 @@ function renderTop() {
   const dot = S.net === 'online' ? 'on' : S.net === 'connecting' ? '' : 'off';
   const label = { online: 'Online', connecting: 'Connecting', away: 'Bank is away' }[S.net];
   const bankBtns = S.role === 'bank' && S.view && !S.view.closed
-    ? `<button class="ghost" id="pauseGame" aria-pressed="${S.view.paused}">${S.view.paused ? 'Resume' : 'Pause'}</button><button class="ghost" id="openLimits">Limits</button>${S.view.closeAfter
-      ? '<button class="ghost" disabled>Closing after this hand</button>'
-      : `<button class="ghost" id="closeTable">${S.closeArm ? 'Tap again to close' : 'Close table'}</button>`}`
+    ? `<button class="ghost" id="pauseGame" aria-pressed="${S.view.paused || S.view.pauseAfter}">${S.view.paused ? '▶ Resume' : S.view.pauseAfter ? '⏸ Pausing…' : '⏸ Pause'}</button><button class="ghost" id="openLimits">Limits</button>`
     : S.role === 'bank' && S.view?.closed ? '<button class="ghost" id="newTable">New game</button>' : '';
   $('topActions').innerHTML = `<span class="ghost" style="border:0"><span class="dot ${dot}"></span>${label}</span>
     <span class="code" title="Table code">${esc(S.code)}</span>
@@ -408,8 +407,10 @@ function renderTop() {
 
 function statusLine(v) {
   const line = statusCore(v);
-  if (!v || v.closed || !v.closeAfter) return line;
-  return `${line} <b>Table closes after this hand.</b>`;
+  if (!v || v.closed) return line;
+  if (v.closeAfter) return `${line} <b>Table closes after this hand.</b>`;
+  if (v.pauseAfter) return `${line} <b>⏸ Pausing after this hand.</b>`;
+  return line;
 }
 
 function statusCore(v) {
@@ -435,7 +436,7 @@ function statusCore(v) {
     return v.turn.pid === pid ? '<b>Your turn</b>' : `<b>${esc(nameOf(v, v.turn.pid))}</b>'s turn`;
   }
   const wait = waitingOn(v);
-  if (v.paused && v.phase === 'betting') return `<b>Paused.</b> ${S.role === 'bank' ? 'Hit Resume to deal again.' : 'Cards come out when the game resumes.'}`;
+  if (v.paused && v.phase === 'betting') return `<b>⏸ Paused.</b> ${S.role === 'bank' ? 'Resume, or close and settle up.' : 'Cards come out when the game resumes.'}`;
   if (v.phase === 'insurance') return `Dealer shows an ace. Insurance? ${wait.length ? `Waiting on ${esc(wait.join(', '))}` : ''}`;
   if (!v.players.length) return S.role === 'bank' ? 'Copy the invite link and send it. You approve each seat.' : 'Nobody is seated yet.';
   if (mine && mine.status === 'bet' && wait.length) return `Bet in. Waiting on ${esc(wait.join(', '))}`;
@@ -443,7 +444,7 @@ function statusCore(v) {
 }
 
 function feltSignature(v) {
-  return JSON.stringify([v.round, v.phase, v.paused, v.closeAfter, v.closed, v.dealer, v.turn, v.online, v.cfg.minBet, v.cfg.maxBet,
+  return JSON.stringify([v.round, v.phase, v.paused, v.pauseAfter, v.closeAfter, v.closed, v.dealer, v.turn, v.online, v.cfg.minBet, v.cfg.maxBet,
     v.players.map((p) => [p.pid, p.name, p.stack, p.status, p.wager, p.ins, p.insNet, p.hands])]);
 }
 
@@ -458,8 +459,12 @@ function renderFelt(v) {
   $('dealer').innerHTML = `<div class="cards">${v.dealer.map((c, i) => cardHtml(`${r}:D:0:${i}`, c)).join('')}</div>
     <div class="meta"><span class="total${late}">${totalLabel(v.dealer)}</span><span class="tag" style="font-size:12px;opacity:.8">${esc(v.cfg.bankName)} (bank)</span></div>`;
   const seats = $('seats');
-  seats.className = `seats ${v.players.length > 3 ? 'many' : ''}`;
-  seats.innerHTML = v.players.map((p) => {
+  // Fixed seats along the bottom curve, sized for the table's max players, so nothing shifts as people bet.
+  const n = Math.max(v.cfg.maxPlayers || 4, v.players.length, 1);
+  seats.className = `seats seats-${n}`;
+  seats.style.setProperty('--n', n);
+  seats.innerHTML = v.players.map((p, idx) => {
+    const x = n === 1 ? 0 : (idx + 0.5) / n * 2 - 1; // -1 left edge, 1 right edge
     const online = v.online ? v.online.includes(p.pid) : true;
     const mine = S.role === 'player' && p.pid === pid;
     const hands = p.hands.length
@@ -477,9 +482,13 @@ function renderFelt(v) {
       : p.status === 'bet' ? `<div class="meta"><span class="spot">${money(p.wager)}</span></div>` : '';
     const ins = p.ins && p.insNet ? `<span class="result ${p.insNet > 0 ? 'win' : 'lose'}${late}">Insurance ${signedMoney(p.insNet)}</span>` : p.ins ? '<span class="tag">Insured</span>' : '';
     const tag = !online ? 'Offline' : p.status === 'out' ? 'Sitting out' : p.stack < v.cfg.minBet && !p.hands.length && p.status !== 'bet' ? 'Needs chips' : '';
-    return `<div class="seat ${v.turn?.pid === p.pid ? 'turn' : ''} ${mine ? 'me' : ''}">
+    return `<div class="seat split-${Math.max(1, p.hands.length)} ${v.turn?.pid === p.pid ? 'turn' : ''} ${mine ? 'me' : ''}" style="--lift:${(x * x).toFixed(3)}">
       <div class="hands">${hands}</div>${ins}
       <span class="name">${esc(p.name)}</span><span class="stack">${money(p.stack)}</span>${tag ? `<span class="tag">${tag}</span>` : ''}</div>`;
+  }).join('') + Array.from({ length: n - v.players.length }, (_, k) => {
+    const idx = v.players.length + k;
+    const x = n === 1 ? 0 : (idx + 0.5) / n * 2 - 1;
+    return `<div class="seat empty" style="--lift:${(x * x).toFixed(3)}"><div class="hands"></div><span class="ring"></span></div>`;
   }).join('');
 
   const total = v.decks * 52;
@@ -493,8 +502,10 @@ function renderFelt(v) {
 
 // A sign on the felt when the bank pauses or the table is on its last hand, with a chime when it changes.
 function tableNotice(v) {
-  const text = v.closed ? '' : v.closeAfter ? 'Last hand' : v.paused ? 'Paused' : '';
-  const sub = v.closeAfter ? 'The table closes after this hand.' : v.paused ? `${esc(v.cfg.bankName)} paused the game.` : '';
+  const text = v.closed ? '' : v.closeAfter ? 'Last hand' : v.paused ? '⏸ Paused' : v.pauseAfter ? '⏸ Pausing after this hand' : '';
+  const sub = v.closeAfter ? 'The table closes after this hand.'
+    : v.paused ? (S.role === 'bank' ? 'Resume, or close and settle up.' : `${esc(v.cfg.bankName)} paused the game.`)
+    : v.pauseAfter ? 'Finish this hand. No new hands after it.' : '';
   let el = $('notice');
   if (!el) {
     el = document.createElement('div');
@@ -540,8 +551,12 @@ function renderControls(v) {
   if (v.closed) return '';
   if (S.role === 'bank') {
     if (v.phase === 'betting') {
+      if (v.paused) {
+        return `<button class="act primary" id="resumeGame">▶ Resume</button>
+          <button class="act" id="closeTable">${S.closeArm ? 'Tap again to close' : 'Close and settle up'}</button>`;
+      }
       const any = v.players.some((p) => p.status === 'bet');
-      return any && !v.paused ? '<button class="act primary" id="dealNow">Deal now</button>' : '';
+      return any ? '<button class="act primary" id="dealNow">Deal now</button>' : '';
     }
     if (v.phase === 'insurance') return '<button class="act" id="skip">Skip insurance</button>';
     if (v.phase === 'play' && v.turn) return `<button class="act" id="skip">Stand for ${esc(nameOf(v, v.turn.pid))}</button>`;
@@ -613,6 +628,7 @@ function openLimits() {
     <label class="field">Min bet<span class="money-in"><input class="in" id="lMin" inputmode="numeric" value="${c.minBet}" style="width:120px"></span></label>
     <label class="field">Max bet<span class="money-in"><input class="in" id="lMax" inputmode="numeric" value="${c.maxBet}" style="width:120px"></span></label>
     <label class="field">Stop loss<span class="money-in"><input class="in" id="lStop" inputmode="numeric" value="${c.stopLoss}" style="width:120px"></span></label>
+    <label class="field">Max players<select class="in" id="lSeats" style="width:120px">${[1, 2, 3, 4, 5, 6].map((n) => `<option ${n === c.maxPlayers ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
     <p class="err neg" id="limitsErr"></p>
     <div class="row-actions"><button class="act primary" type="submit">Save</button></div>`;
   $('limits').showModal();
@@ -642,7 +658,8 @@ document.addEventListener('click', (e) => {
   if ('close' in t.dataset) { t.closest('dialog').close(); return; }
   if (t.id === 'copyInvite') copyInvite();
   else if (t.id === 'openSettings') openSettings();
-  else if (t.id === 'pauseGame') bank((g) => g.setPaused(!g.paused));
+  else if (t.id === 'pauseGame') bank((g) => g.setPaused(!(g.paused || g.pauseAfter)));
+  else if (t.id === 'resumeGame') bank((g) => g.setPaused(false));
   else if (t.id === 'openLimits') openLimits();
   else if (t.id === 'closeTable') {
     if (!S.closeArm) { S.closeArm = true; draw(); setTimeout(() => { S.closeArm = false; draw(); }, 3000); return; }
@@ -684,7 +701,7 @@ document.addEventListener('submit', (e) => {
     $('buyAmt').value = '';
   } else if (f.id === 'limitsForm') {
     try {
-      S.game.setLimits({ minBet: $('lMin').value, maxBet: $('lMax').value, stopLoss: $('lStop').value });
+      S.game.setLimits({ minBet: $('lMin').value, maxBet: $('lMax').value, stopLoss: $('lStop').value, maxPlayers: $('lSeats').value });
       $('limits').close();
       publish();
     } catch (err) { $('limitsErr').textContent = err.message; }

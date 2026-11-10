@@ -222,3 +222,29 @@ test('closing mid-hand closes right after the hand is paid', () => {
   assert.equal(g.closed, true);
   assert.equal(g.player('a').lastNet, -10); // dealer 16 draws a 5
 });
+
+test('max players caps seats', () => {
+  const g = table({ maxPlayers: 2 });
+  g.join('b', 'Max', 100);
+  assert.throws(() => g.request('c', 'Zoe', 50), /full/);
+  assert.throws(() => g.join('c', 'Zoe', 50), /full/);
+  g.setLimits({ minBet: 5, maxBet: 100, stopLoss: 500, maxPlayers: 3 });
+  g.request('c', 'Zoe', 50);
+  assert.equal(g.requests.length, 1);
+});
+
+test('pausing mid-hand warns first and pauses once the hand is paid', () => {
+  const g = table();
+  rig(g, ['10', '9', '6', '7']);
+  g.bet('a', 10);
+  g.setPaused(true);
+  assert.equal(g.paused, false);
+  assert.equal(g.pauseAfter, true);
+  g.act('a', 'stand');
+  assert.equal(g.paused, true);
+  assert.equal(g.pauseAfter, false);
+  g.bet('a', 10);
+  assert.equal(g.round, 1);
+  g.close();
+  assert.equal(g.closed, true);
+});
