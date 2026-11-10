@@ -8,6 +8,9 @@ const $ = (id) => document.getElementById(id);
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 const TEXT = '︎';
 const PREFIX = 'truecount-hg-';
+// Relay for players whose networks block direct connections (most cell data, many dorm and work Wi-Fi).
+// Metered's free TURN: paste the credentials URL from the dashboard here. Empty = direct only.
+const TURN_CREDENTIALS_URL = '';
 const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const LABELS = { hit: ['Hit', 'H'], stand: ['Stand', 'S'], double: ['Double', 'D'], split: ['Split', 'P'], surrender: ['Surrender', 'R'] };
 const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
@@ -22,6 +25,18 @@ const hostKey = (c) => `tc-host-${c}`;
 let pid = store.get('tc-pid');
 if (!pid) { pid = crypto.randomUUID(); store.set('tc-pid', pid); }
 
+let iceServers = null;
+async function iceConfig() {
+  if (iceServers) return { iceServers };
+  const base = [{ urls: 'stun:stun.l.google.com:19302' }];
+  if (!TURN_CREDENTIALS_URL) return { iceServers: base };
+  try {
+    const res = await fetch(TURN_CREDENTIALS_URL);
+    iceServers = [...base, ...(await res.json())];
+  } catch { return { iceServers: base }; }
+  return { iceServers };
+}
+
 const S = {
   role: null, code: '', game: null, view: null, peer: null, conn: null,
   conns: new Map(), net: 'connecting', flash: '', flashTimer: 0, shown: new Set(), closeArm: false,
@@ -33,8 +48,23 @@ function boot() {
   const code = location.hash.slice(1).toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!code) { lobbyCreate(); return; }
   const saved = store.get(hostKey(code));
-  if (saved) startHost(code, TableGame.restore(saved));
-  else startClient(code);
+  if (!saved) { startClient(code); return; }
+  // Only one tab can be the bank. If this table is already open here, say so instead of fighting over it.
+  const bc = 'BroadcastChannel' in window ? new BroadcastChannel(`tc-bank-${code}`) : null;
+  let taken = false;
+  if (bc) {
+    bc.onmessage = (e) => { if (e.data === 'here') taken = true; };
+    bc.postMessage('who');
+  }
+  setTimeout(() => {
+    if (taken) {
+      $('lobby').hidden = false;
+      $('lobbyCard').innerHTML = '<h2>Already open</h2><p class="lede">This table is open in another tab in this browser. Use that tab.</p>';
+      return;
+    }
+    bc?.close();
+    startHost(code, TableGame.restore(saved));
+  }, 300);
 }
 window.addEventListener('hashchange', () => location.reload());
 
@@ -94,13 +124,18 @@ function startHost(code, game) {
   S.role = 'bank';
   S.code = code;
   S.game = game;
+  if ('BroadcastChannel' in window) {
+    S.bankChannel = new BroadcastChannel(`tc-bank-${code}`);
+    S.bankChannel.onmessage = (e) => { if (e.data === 'who') S.bankChannel.postMessage('here'); };
+  }
   showTable();
   connectHost();
   publish();
 }
 
-function connectHost() {
-  const peer = new Peer(PREFIX + S.code);
+async function connectHost() {
+  const config = await iceConfig();
+  const peer = new Peer(PREFIX + S.code, { config });
   S.peer = peer;
   S.net = 'connecting';
   peer.on('open', () => { if (S.peer === peer) { S.net = 'online'; draw(); } });
@@ -179,8 +214,9 @@ function startClient(code) {
   connectClient();
 }
 
-function connectClient() {
-  const peer = new Peer();
+async function connectClient() {
+  const config = await iceConfig();
+  const peer = new Peer({ config });
   S.peer = peer;
   S.net = 'connecting';
   peer.on('open', () => { if (S.peer === peer) openConn(); });
@@ -191,6 +227,7 @@ function connectClient() {
   peer.on('error', (e) => {
     if (S.peer !== peer) return;
     if (e.type === 'peer-unavailable') {
+      S.missing = true;
       S.net = 'notfound'; draw();
       setTimeout(openConn, 4000);
       return;
@@ -206,6 +243,15 @@ function openConn() {
   if (!S.peer || S.peer.destroyed || S.peer.disconnected) return;
   const conn = S.peer.connect(PREFIX + S.code, { reliable: true });
   S.conn = conn;
+  S.missing = false;
+  // The broker found the bank but the two browsers never linked up: a network is blocking it.
+  setTimeout(() => {
+    if (S.conn !== conn || conn.open || S.missing) return;
+    S.net = 'blocked'; draw();
+    conn.close();
+    S.conn = null;
+    setTimeout(openConn, 5000);
+  }, 15000);
   conn.on('open', () => { S.net = 'online'; conn.send({ t: 'hello', pid }); draw(); });
   conn.on('data', (msg) => {
     if (msg?.t === 'state') { S.view = msg.view; draw(); }
@@ -303,7 +349,7 @@ function keepInputs(id, fn) {
 
 function renderTop() {
   const dot = S.net === 'online' ? 'on' : S.net === 'connecting' ? '' : 'off';
-  const label = { online: 'Online', connecting: 'Connecting', reconnecting: 'Reconnecting', notfound: 'Table not found', offline: 'Offline' }[S.net];
+  const label = { online: 'Online', connecting: 'Connecting', reconnecting: 'Reconnecting', notfound: 'Table not found', blocked: "Can't reach the bank", offline: 'Offline' }[S.net];
   const bankBtns = S.role === 'bank' && S.view && !S.view.closed
     ? `<button class="ghost" id="openLimits">Limits</button><button class="ghost" id="closeTable">${S.closeArm ? 'Tap again to close' : 'Close table'}</button>`
     : S.role === 'bank' && S.view?.closed ? '<button class="ghost" id="newTable">New game</button>' : '';
@@ -315,6 +361,7 @@ function renderTop() {
 function statusLine(v) {
   if (!v) {
     if (S.net === 'notfound') return `Can't find table ${esc(S.code)}. The bank's page has to be open. Retrying.`;
+    if (S.net === 'blocked') return `Found table ${esc(S.code)} but can't connect to the bank's browser. Some Wi-Fi and cell networks block this. Retrying.`;
     return `Connecting to table ${esc(S.code)}…`;
   }
   if (v.closed) return `<b>Table closed.</b> ${esc(v.closeReason)}`;

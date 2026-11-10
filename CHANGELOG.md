@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-10
+- Home game connection fixes: a player whose network blocks the direct link now sees "Can't reach the bank" instead of spinning forever; a second tab of the same table in the bank's browser says "Already open" instead of fighting over the table. Found that PeerJS's free relay (TURN) is dead, so players on cell data or strict Wi-Fi cannot connect; added a TURN_CREDENTIALS_URL hook in table.js for a Metered free relay.
 - Changing decks per shoe now shuffles a new shoe right away (or after the current hand), and the shoe label shows the cut point when penetration is fixed. Before, a deck change waited for the next shuffle, so 90% on "8 decks" could still be playing out an older shoe.
 - Deck penetration now takes effect right away: changing it moves the cut card in the shoe you are playing, instead of waiting for the next shuffle.
 - Added Home game (table.html, "Play online" in the header): private online blackjack with friends. The host is the bank and sets min bet, max bet, stop loss, decks, penetration and late surrender. Friends open the invite link, enter a name and buy-in, and the bank approves each seat and each rebuy. Players cash out between hands whenever they want. A ledger shows in, out, chips and net, plus who pays whom; the table closes itself when the bank hits the stop loss. Money never goes through the app, settle on Zelle.
