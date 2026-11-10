@@ -132,7 +132,9 @@ function renderTable() {
   const ticks = Array.from({ length: game.decks - 1 }, (_, i) =>
     `<div class="tray-tick" style="bottom:${((i + 1) / game.decks) * 100}%"></div>`).join('');
   $('tray').innerHTML = `<div class="tray-box"><div class="tray-fill" style="height:${(game.discarded / total) * 100}%"></div>${ticks}</div><span>Discards</span>`;
-  $('shoe').textContent = `${game.decks} deck shoe`;
+  $('shoe').innerHTML = settings.penMode === 'random'
+    ? `${game.decks} deck shoe`
+    : `${game.decks} deck shoe<br><span style="font:500 12px var(--sans);opacity:.8">Cut at ${Math.round(game.penetration * 100)}%</span>`;
 
   const chip = $('countchip');
   chip.hidden = !settings.showCount;
@@ -460,7 +462,15 @@ document.addEventListener('submit', (e) => {
 
 document.addEventListener('change', (e) => {
   const { id, value, checked } = e.target;
-  if (id === 'setDecks') settings.deckMode = value === 'random' ? value : Number(value);
+  if (id === 'setDecks') {
+    settings.deckMode = value === 'random' ? value : Number(value);
+    save();
+    // A different deck count needs a fresh shoe. Mid-hand it waits for the next shuffle.
+    if (game.phase !== 'play' && game.phase !== 'insurance') shuffleNewShoe();
+    else pushNote({ tag: 'Settings', title: 'New deck count starts next shoe', lines: ['Finish this hand, then use Shuffle now.'] });
+    renderSettings();
+    return;
+  }
   else if (id === 'setPen') {
     settings.penMode = value === 'random' ? value : Number(value);
     game.setPenetration(settings.penMode);
