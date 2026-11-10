@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "python3 -m http.server 4173 --bind 127.0.0.1 -d public",
     "test": "node --test \"test/*.test.js\"",
     "sim": "node scripts/sim.mjs",
     "index-check": "node scripts/index-check.mjs"

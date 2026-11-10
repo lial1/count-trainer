@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home Game</title>
+  <meta name="description" content="Private online blackjack with friends. One of you is the bank, everyone settles up after.">
+  <meta name="theme-color" content="#0d1412">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='2' width='20' height='28' rx='3' fill='%23fbf6ea'/><text x='16' y='23' font-size='18' text-anchor='middle' fill='%23a3211b'>%E2%99%A0</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="table.css">
+</head>
+<body>
+  <header class="top">
+    <h1><a href="./" class="home">True Count</a> <span class="sub">Home game</span></h1>
+    <div class="top-actions" id="topActions"></div>
+  </header>
+
+  <main class="layout" id="tableView" hidden>
+    <section class="play" aria-label="Blackjack table">
+      <div class="rail">
+        <div class="felt">
+          <div class="tray" id="tray" aria-label="Discard tray"></div>
+          <div class="shoe" id="shoe"></div>
+          <div class="zone dealer" id="dealer"></div>
+          <svg class="arc" viewBox="0 0 600 120" aria-hidden="true">
+            <path id="arc1" d="M 40 14 Q 300 104 560 14" fill="none"/>
+            <path id="arc2" d="M 90 46 Q 300 118 510 46" fill="none"/>
+            <text class="arc-main"><textPath href="#arc1" startOffset="50%" text-anchor="middle">BLACKJACK PAYS 3 TO 2</textPath></text>
+            <text class="arc-sub" id="arcSub"><textPath href="#arc2" startOffset="50%" text-anchor="middle">DEALER STANDS ON ALL 17s</textPath></text>
+          </svg>
+          <div class="seats" id="seats"></div>
+        </div>
+      </div>
+      <div class="status" id="status" aria-live="polite"></div>
+      <div class="controls" id="controls"></div>
+    </section>
+
+    <aside class="coach" aria-label="Table">
+      <div class="panel" id="requests" hidden></div>
+      <div class="panel" id="ledger"></div>
+      <div class="panel" id="settle"></div>
+      <div class="panel feed" id="log"></div>
+    </aside>
+  </main>
+
+  <div class="lobby" id="lobby" hidden>
+    <div class="lobby-card" id="lobbyCard"></div>
+  </div>
+
+  <dialog id="limits" class="sheet">
+    <div class="sheet-head"><h2>Table limits</h2><button class="ghost" data-close>Close</button></div>
+    <form id="limitsForm"></form>
+  </dialog>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script type="module" src="table.js"></script>
+</body>
+</html>
