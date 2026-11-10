@@ -3,6 +3,7 @@ import {
   explain, explainBet, handValue, ruleName, signed, upLabel, makeDrill, gradeDrill,
 } from './engine.js';
 
+const PEN_POOL = [0.5, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9];
 const STORE = 'true-count-v1';
 const STAGGER = 150;
 const $ = (id) => document.getElementById(id);
@@ -15,7 +16,7 @@ function load() {
   try { return JSON.parse(localStorage.getItem(STORE)) ?? {}; } catch { return {}; }
 }
 const saved = load();
-const settings = { deckMode: 'random', surrender: false, every: 3, showCount: false, drillTrue: false, ...saved.settings };
+const settings = { deckMode: 'random', penMode: 'random', surrender: false, every: 3, showCount: false, drillTrue: false, ...saved.settings };
 const drillStats = { ...saved.drill }; // spot id -> [right, asked]
 const stats = { ...blankStats(), ...saved.stats };
 let shoeStats = blankStats();
@@ -24,7 +25,7 @@ function save() {
   try { localStorage.setItem(STORE, JSON.stringify({ settings, stats, drill: drillStats })); } catch { /* private window */ }
 }
 
-const game = new Game({ deckMode: settings.deckMode, surrender: settings.surrender });
+const game = new Game({ deckMode: settings.deckMode, penMode: settings.penMode, surrender: settings.surrender });
 const ui = { bet: 1, checkDue: false, sinceCheck: 0, guess: 0, busy: false, feed: [], shown: new Set(), flipped: new Set(), late: 0 };
 
 function bump(key, ok) {
@@ -277,6 +278,7 @@ function openShoeEnd() {
 
 function shuffleNewShoe() {
   game.deckMode = settings.deckMode;
+  game.penMode = settings.penMode;
   game.newShoe();
   shoeStats = blankStats();
   ui.sinceCheck = 0;
@@ -399,18 +401,21 @@ function renderLearn() {
     <div class="scroll"><table>${head}${fab.map(row).join('')}</table></div>
 
     <h3>Table rules</h3>
-    <p>Dealer stands on all 17s, blackjack pays 3 to 2, double any two cards, double after split, split to 4 hands, split aces get one card, dealer peeks for blackjack. Shoes are ${DECK_POOL.join(', ').replace(/, (\d)$/, ' or $1')} decks and the cut card falls 70 to 80% of the way in.</p>
+    <p>Dealer stands on all 17s, blackjack pays 3 to 2, double any two cards, double after split, split to 4 hands, split aces get one card, dealer peeks for blackjack. Shoes are ${DECK_POOL.join(', ').replace(/, (\d)$/, ' or $1')} decks and the cut card falls ${settings.penMode === 'random' ? '70 to 80%' : `${Math.round(settings.penMode * 100)}%`} of the way in.</p>
     <p>Keys: H hit, S stand, D double, P split, R surrender, Y and N for insurance, Enter to deal.</p>`;
 }
 
 function renderSettings() {
   const deckOptions = ['random', ...DECK_POOL].map((d) =>
     `<option value="${d}" ${String(settings.deckMode) === String(d) ? 'selected' : ''}>${d === 'random' ? 'Random each shoe' : `${d} decks`}</option>`).join('');
+  const penOptions = ['random', ...PEN_POOL].map((p) =>
+    `<option value="${p}" ${String(settings.penMode) === String(p) ? 'selected' : ''}>${p === 'random' ? 'Random 70 to 80%' : `${Math.round(p * 100)}%`}</option>`).join('');
   const everyOptions = [[1, 'Every hand'], [3, 'Every 3 hands'], [5, 'Every 5 hands'], [0, 'Never']].map(([v, l]) =>
     `<option value="${v}" ${settings.every === v ? 'selected' : ''}>${l}</option>`).join('');
   const midRound = game.phase === 'play' || game.phase === 'insurance';
   $('settingsBody').innerHTML = `
     <label class="field">Decks per shoe<select id="setDecks">${deckOptions}</select></label>
+    <label class="field">Deck penetration<select id="setPen">${penOptions}</select></label>
     <label class="field">Count check<select id="setEvery">${everyOptions}</select></label>
     <label class="field">Late surrender<input type="checkbox" id="setSurrender" ${settings.surrender ? 'checked' : ''}></label>
     <div class="row-actions">
@@ -456,6 +461,7 @@ document.addEventListener('submit', (e) => {
 document.addEventListener('change', (e) => {
   const { id, value, checked } = e.target;
   if (id === 'setDecks') settings.deckMode = value === 'random' ? value : Number(value);
+  else if (id === 'setPen') settings.penMode = value === 'random' ? value : Number(value);
   else if (id === 'setEvery') settings.every = Number(value);
   else if (id === 'setSurrender') { settings.surrender = checked; renderControls(); }
   else if (id === 'setDrillTrue') { settings.drillTrue = checked; save(); renderDrill(); return; }

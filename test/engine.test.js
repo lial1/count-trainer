@@ -210,3 +210,12 @@ test('drill scenarios are real deviations with a clear answer', async () => {
     assert.equal(sides.size, ids.length);
   }
 });
+test('fixed penetration sets the cut card', () => {
+  const g = new Game({ deckMode: 6, penMode: 0.85 });
+  assert.equal(g.cutRemaining, Math.round(312 * 0.15));
+  const r = new Game({ deckMode: 6 });
+  for (let i = 0; i < 50; i += 1) {
+    r.newShoe();
+    assert.ok(r.penetration >= 0.7 && r.penetration <= 0.8);
+  }
+});

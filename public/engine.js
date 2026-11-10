@@ -186,8 +186,9 @@ export function recommendedBet(tc) {
 /* ---------- game ---------- */
 
 export class Game {
-  constructor({ deckMode = 'random', surrender = false, rng = Math.random } = {}) {
+  constructor({ deckMode = 'random', penMode = 'random', surrender = false, rng = Math.random } = {}) {
     this.deckMode = deckMode;
+    this.penMode = penMode;
     this.surrender = surrender;
     this.rng = rng;
     this.newShoe();
@@ -200,8 +201,9 @@ export class Game {
         : Number(this.deckMode);
     this.shoe = buildShoe(this.decks, this.rng);
     const total = this.shoe.length;
-    const penetration = 0.7 + this.rng() * 0.1;
-    this.cutRemaining = Math.max(20, Math.round(total * (1 - penetration)));
+    const penetration = this.penMode === 'random' ? 0.7 + this.rng() * 0.1 : Number(this.penMode);
+    this.penetration = penetration;
+    this.cutRemaining = Math.max(10, Math.round(total * (1 - penetration)));
     this.rc = 0;
     this.shoeId = (this.shoeId ?? 0) + 1;
     this.resetTable();

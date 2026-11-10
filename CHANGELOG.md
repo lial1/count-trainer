@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-10
+- Added a Deck penetration setting: Random 70 to 80% (the old behavior, still the default) or a fixed 50, 60, 65, 70, 75, 80, 85 or 90%. Takes effect on the next shuffle, same as decks per shoe.
+- Lowered the minimum cards behind the cut from 20 to 10, so 90% on a 2 deck shoe really is 90%.
+
 ## 2026-11-07
 - Fixed the score bar labels (Plays, Deviations, Count, Bets, Units) getting cut off once the coach feed filled up; the feed now scrolls under a full-size score bar.
 - Added a deviation drill (Drill button): a hand, a dealer upcard, and a running count with decks left, never within 0.5 of the index so each answer is clear. Covers the Illustrious 18, plus the Fab 4 when late surrender is on.
