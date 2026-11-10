@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-10
+- Home game no longer uses peer to peer. A friend on another network could not connect (stuck on Connecting) because PeerJS's free relay and Metered's open relay are both dead. Moves now go through two free public MQTT brokers (HiveMQ and EMQX) at once, so it works on any network and survives one broker going down. Everything is AES-GCM encrypted with a key that only lives in the invite link after the # (never sent to any server); the room topic is a hash of code and key. Invite links are now CODE.KEY; old links show "Old invite link". Players see "Bank is away" if the bank's page closes. Removed PeerJS and the TURN hook.
 - Home game connection fixes: a player whose network blocks the direct link now sees "Can't reach the bank" instead of spinning forever; a second tab of the same table in the bank's browser says "Already open" instead of fighting over the table. Found that PeerJS's free relay (TURN) is dead, so players on cell data or strict Wi-Fi cannot connect; added a TURN_CREDENTIALS_URL hook in table.js for a Metered free relay.
 - Changing decks per shoe now shuffles a new shoe right away (or after the current hand), and the shoe label shows the cut point when penetration is fixed. Before, a deck change waited for the next shuffle, so 90% on "8 decks" could still be playing out an older shoe.
 - Deck penetration now takes effect right away: changing it moves the cut card in the shoe you are playing, instead of waiting for the next shuffle.

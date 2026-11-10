@@ -1,19 +1,19 @@
-// Home game: one browser is the bank and runs the table; friends connect to it peer to peer.
-// No server of ours. PeerJS's free broker only introduces the browsers; cards and money stay between them.
+// Home game: one browser is the bank and runs the table. Players talk to it through two free
+// public MQTT brokers, end-to-end encrypted with a key that only lives in the invite link (net.js).
+// Plain web traffic, so it works on cell data and strict Wi-Fi where direct browser links fail.
 
 import { handValue } from './engine.js';
 import { TableGame, money, cleanConfig, DEFAULTS, MAX_BUY_IN } from './table-engine.js';
+import { openRoom, newKey, validKey } from './net.js';
 
 const $ = (id) => document.getElementById(id);
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
 const TEXT = '︎';
-const PREFIX = 'truecount-hg-';
-// Relay for players whose networks block direct connections (most cell data, many dorm and work Wi-Fi).
-// Metered's free TURN: paste the credentials URL from the dashboard here. Empty = direct only.
-const TURN_CREDENTIALS_URL = '';
 const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const LABELS = { hit: ['Hit', 'H'], stand: ['Stand', 'S'], double: ['Double', 'D'], split: ['Split', 'P'], surrender: ['Surrender', 'R'] };
 const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+const PING_MS = 8000;
+const AWAY_MS = 25000;
 
 const store = {
   get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
@@ -21,34 +21,28 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
 const hostKey = (c) => `tc-host-${c}`;
+const roomKey = (c) => `tc-key-${c}`;
 
 let pid = store.get('tc-pid');
 if (!pid) { pid = crypto.randomUUID(); store.set('tc-pid', pid); }
 
-let iceServers = null;
-async function iceConfig() {
-  if (iceServers) return { iceServers };
-  const base = [{ urls: 'stun:stun.l.google.com:19302' }];
-  if (!TURN_CREDENTIALS_URL) return { iceServers: base };
-  try {
-    const res = await fetch(TURN_CREDENTIALS_URL);
-    iceServers = [...base, ...(await res.json())];
-  } catch { return { iceServers: base }; }
-  return { iceServers };
-}
-
 const S = {
-  role: null, code: '', game: null, view: null, peer: null, conn: null,
-  conns: new Map(), net: 'connecting', flash: '', flashTimer: 0, shown: new Set(), closeArm: false,
+  role: null, code: '', key: '', game: null, view: null, room: null, net: 'connecting',
+  seen: new Map(), lastState: 0, stateAt: 0, flash: '', flashTimer: 0, shown: new Set(), closeArm: false,
 };
 
 /* ---------- start ---------- */
 
 function boot() {
-  const code = location.hash.slice(1).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const [rawCode = '', rawKey = ''] = location.hash.slice(1).split('.');
+  const code = rawCode.toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!code) { lobbyCreate(); return; }
   const saved = store.get(hostKey(code));
-  if (!saved) { startClient(code); return; }
+  if (!saved) {
+    if (!validKey(rawKey)) { badLink(); return; }
+    startClient(code, rawKey);
+    return;
+  }
   // Only one tab can be the bank. If this table is already open here, say so instead of fighting over it.
   const bc = 'BroadcastChannel' in window ? new BroadcastChannel(`tc-bank-${code}`) : null;
   let taken = false;
@@ -57,16 +51,24 @@ function boot() {
     bc.postMessage('who');
   }
   setTimeout(() => {
+    bc?.close();
     if (taken) {
       $('lobby').hidden = false;
       $('lobbyCard').innerHTML = '<h2>Already open</h2><p class="lede">This table is open in another tab in this browser. Use that tab.</p>';
       return;
     }
-    bc?.close();
-    startHost(code, TableGame.restore(saved));
+    let key = store.get(roomKey(code));
+    if (!validKey(key || '')) { key = newKey(); store.set(roomKey(code), key); }
+    history.replaceState(null, '', `#${code}.${key}`);
+    startHost(code, key, TableGame.restore(saved));
   }, 300);
 }
 window.addEventListener('hashchange', () => location.reload());
+
+function badLink() {
+  $('lobby').hidden = false;
+  $('lobbyCard').innerHTML = '<h2>Old invite link</h2><p class="lede">This link is missing its key, so it is probably from an older version. Ask the bank to hit "Copy invite link" and send it again.</p>';
+}
 
 function showTable() {
   $('lobby').hidden = true;
@@ -114,75 +116,57 @@ function createGame() {
   } catch (e) { $('createErr').textContent = e.message; return; }
   store.set('tc-last-cfg', cfg);
   const code = Array.from(crypto.getRandomValues(new Uint32Array(6)), (n) => ALPHA[n % ALPHA.length]).join('');
-  history.replaceState(null, '', `#${code}`);
-  startHost(code, new TableGame(cfg));
+  const key = newKey();
+  store.set(roomKey(code), key);
+  history.replaceState(null, '', `#${code}.${key}`);
+  startHost(code, key, new TableGame(cfg));
 }
 
 /* ---------- bank (host) ---------- */
 
-function startHost(code, game) {
+async function startHost(code, key, game) {
   S.role = 'bank';
   S.code = code;
+  S.key = key;
   S.game = game;
   if ('BroadcastChannel' in window) {
     S.bankChannel = new BroadcastChannel(`tc-bank-${code}`);
     S.bankChannel.onmessage = (e) => { if (e.data === 'who') S.bankChannel.postMessage('here'); };
   }
   showTable();
-  connectHost();
   publish();
-}
-
-async function connectHost() {
-  const config = await iceConfig();
-  const peer = new Peer(PREFIX + S.code, { config });
-  S.peer = peer;
-  S.net = 'connecting';
-  peer.on('open', () => { if (S.peer === peer) { S.net = 'online'; draw(); } });
-  peer.on('connection', (conn) => {
-    conn.on('data', (msg) => onHostMsg(conn, msg));
-    const drop = () => { if (S.conns.delete(conn)) publish(false); };
-    conn.on('close', drop);
-    conn.on('error', drop);
+  S.room = await openRoom(code, key, {
+    subs: ['in'],
+    onStatus: (st) => { const was = S.net; S.net = st; if (st === 'online' && was !== 'online') publish(false); else draw(); },
+    onMessage: (_, msg) => onHostMsg(msg),
   });
-  peer.on('disconnected', () => {
-    if (S.peer !== peer || peer.destroyed) return;
-    S.net = 'reconnecting'; draw();
-    setTimeout(() => { if (S.peer === peer && !peer.destroyed) peer.reconnect(); }, 2000);
-  });
-  peer.on('error', (e) => {
-    if (S.peer !== peer || e.type === 'peer-unavailable') return;
-    // After a refresh the broker can hold the old id for a bit. Keep trying.
-    S.net = 'reconnecting'; draw();
-    peer.destroy();
-    setTimeout(() => { if (S.peer === peer) connectHost(); }, e.type === 'unavailable-id' ? 4000 : 3000);
-  });
+  // Re-send the table now and then, so players can tell the bank is still here, and drop stale players.
+  setInterval(() => publish(false), PING_MS);
 }
 
 function buildView() {
   const v = S.game.view();
-  v.online = [...new Set(S.conns.values())];
+  const now = Date.now();
+  v.online = [...S.seen].filter(([, t]) => now - t < AWAY_MS).map(([id]) => id);
   return v;
 }
 
 function publish(save = true) {
   if (save) store.set(hostKey(S.code), S.game);
   S.view = buildView();
-  for (const [conn, who] of S.conns) {
-    if (conn.open) conn.send({ t: 'state', view: S.view, you: who });
-  }
+  S.room?.publish('state', { t: 'state', view: S.view, at: Date.now() }, true);
   draw();
 }
 
-function onHostMsg(conn, msg) {
-  if (!msg || typeof msg !== 'object') return;
-  if (msg.t === 'hello') {
-    S.conns.set(conn, String(msg.pid).slice(0, 64));
-    publish(false);
+function onHostMsg(msg) {
+  if (!msg || typeof msg !== 'object' || !msg.pid) return;
+  const who = String(msg.pid).slice(0, 64);
+  const isNew = !S.seen.has(who) || Date.now() - S.seen.get(who) > AWAY_MS;
+  S.seen.set(who, Date.now());
+  if (msg.t === 'hello' || msg.t === 'ping') {
+    if (isNew || msg.t === 'hello') publish(false);
     return;
   }
-  const who = S.conns.get(conn);
-  if (!who) return;
   const g = S.game;
   try {
     if (msg.t === 'request') g.request(who, msg.name, msg.amount);
@@ -193,7 +177,7 @@ function onHostMsg(conn, msg) {
     else if (msg.t === 'cashout') g.cashOut(who);
     else return;
   } catch (e) {
-    if (conn.open) conn.send({ t: 'err', text: e.message });
+    S.room?.publish(`to/${who}`, { t: 'err', text: e.message });
     return;
   }
   publish();
@@ -206,67 +190,42 @@ function bank(fn) {
 
 /* ---------- player (client) ---------- */
 
-function startClient(code) {
+async function startClient(code, key) {
   S.role = 'player';
   S.code = code;
+  S.key = key;
   showTable();
   draw();
-  connectClient();
+  S.room = await openRoom(code, key, {
+    subs: ['state', `to/${pid}`],
+    onStatus: (st) => {
+      if (st === 'online') send({ t: 'hello' }, true);
+      else S.net = 'connecting';
+      draw();
+    },
+    onMessage: (_, msg) => {
+      if (msg.t === 'state') {
+        // Two brokers can deliver out of order. Keep the newest table.
+        if (msg.at < S.stateAt) return;
+        S.stateAt = msg.at;
+        S.view = msg.view;
+        S.lastState = Date.now();
+        S.net = 'online';
+        draw();
+      } else if (msg.t === 'err') flash(msg.text);
+    },
+  });
+  setInterval(() => {
+    if (!S.room?.online) return;
+    send({ t: 'ping' }, true);
+    const away = !S.lastState || Date.now() - S.lastState > AWAY_MS;
+    if (away && S.net !== 'away') { S.net = 'away'; draw(); }
+  }, PING_MS);
 }
 
-async function connectClient() {
-  const config = await iceConfig();
-  const peer = new Peer({ config });
-  S.peer = peer;
-  S.net = 'connecting';
-  peer.on('open', () => { if (S.peer === peer) openConn(); });
-  peer.on('disconnected', () => {
-    if (S.peer !== peer || peer.destroyed) return;
-    setTimeout(() => { if (S.peer === peer && !peer.destroyed) peer.reconnect(); }, 2000);
-  });
-  peer.on('error', (e) => {
-    if (S.peer !== peer) return;
-    if (e.type === 'peer-unavailable') {
-      S.missing = true;
-      S.net = 'notfound'; draw();
-      setTimeout(openConn, 4000);
-      return;
-    }
-    S.net = 'reconnecting'; draw();
-    peer.destroy();
-    setTimeout(() => { if (S.peer === peer) connectClient(); }, 3000);
-  });
-}
-
-function openConn() {
-  if (S.conn && S.conn.open) return;
-  if (!S.peer || S.peer.destroyed || S.peer.disconnected) return;
-  const conn = S.peer.connect(PREFIX + S.code, { reliable: true });
-  S.conn = conn;
-  S.missing = false;
-  // The broker found the bank but the two browsers never linked up: a network is blocking it.
-  setTimeout(() => {
-    if (S.conn !== conn || conn.open || S.missing) return;
-    S.net = 'blocked'; draw();
-    conn.close();
-    S.conn = null;
-    setTimeout(openConn, 5000);
-  }, 15000);
-  conn.on('open', () => { S.net = 'online'; conn.send({ t: 'hello', pid }); draw(); });
-  conn.on('data', (msg) => {
-    if (msg?.t === 'state') { S.view = msg.view; draw(); }
-    else if (msg?.t === 'err') flash(msg.text);
-  });
-  conn.on('close', () => {
-    if (S.conn !== conn) return;
-    S.net = 'reconnecting'; draw();
-    setTimeout(openConn, 2000);
-  });
-}
-
-function send(msg) {
-  if (S.conn?.open) S.conn.send(msg);
-  else flash('Not connected to the table yet');
+function send(msg, quiet = false) {
+  if (S.room?.online) S.room.publish('in', { ...msg, pid });
+  else if (!quiet) flash('Not connected to the table yet');
 }
 
 /* ---------- rendering ---------- */
@@ -349,7 +308,7 @@ function keepInputs(id, fn) {
 
 function renderTop() {
   const dot = S.net === 'online' ? 'on' : S.net === 'connecting' ? '' : 'off';
-  const label = { online: 'Online', connecting: 'Connecting', reconnecting: 'Reconnecting', notfound: 'Table not found', blocked: "Can't reach the bank", offline: 'Offline' }[S.net];
+  const label = { online: 'Online', connecting: 'Connecting', away: 'Bank is away' }[S.net];
   const bankBtns = S.role === 'bank' && S.view && !S.view.closed
     ? `<button class="ghost" id="openLimits">Limits</button><button class="ghost" id="closeTable">${S.closeArm ? 'Tap again to close' : 'Close table'}</button>`
     : S.role === 'bank' && S.view?.closed ? '<button class="ghost" id="newTable">New game</button>' : '';
@@ -360,11 +319,11 @@ function renderTop() {
 
 function statusLine(v) {
   if (!v) {
-    if (S.net === 'notfound') return `Can't find table ${esc(S.code)}. The bank's page has to be open. Retrying.`;
-    if (S.net === 'blocked') return `Found table ${esc(S.code)} but can't connect to the bank's browser. Some Wi-Fi and cell networks block this. Retrying.`;
+    if (S.net === 'away') return `Can't find the bank for table ${esc(S.code)}. Their page has to be open. Still trying.`;
     return `Connecting to table ${esc(S.code)}…`;
   }
   if (v.closed) return `<b>Table closed.</b> ${esc(v.closeReason)}`;
+  if (S.role === 'player' && S.net === 'away') return "<b>The bank's page is closed or asleep.</b> Your seat and chips are saved.";
   const mine = me(v);
   if (v.phase === 'play' && v.turn) {
     return v.turn.pid === pid ? '<b>Your turn</b>' : `<b>${esc(nameOf(v, v.turn.pid))}</b>'s turn`;
@@ -490,7 +449,7 @@ function openLimits() {
 /* ---------- events ---------- */
 
 async function copyInvite() {
-  const url = `${location.origin}${location.pathname}#${S.code}`;
+  const url = `${location.origin}${location.pathname}#${S.code}.${S.key}`;
   try { await navigator.clipboard.writeText(url); flash('Invite link copied'); }
   catch { flash(url); }
 }
@@ -507,7 +466,8 @@ document.addEventListener('click', (e) => {
     bank((g) => g.close());
   } else if (t.id === 'newTable') {
     store.del(hostKey(S.code));
-    S.peer?.destroy();
+    store.del(roomKey(S.code));
+    S.room?.close();
     location.hash = '';
   } else if (t.id === 'dealNow') bank((g) => g.dealNow());
   else if (t.id === 'skip') bank((g) => g.skip());
@@ -560,7 +520,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-if (typeof Peer === 'undefined') {
+if (typeof mqtt === 'undefined') {
   document.body.innerHTML = '<p style="padding:20px">Could not load the connection library. Check your internet and refresh.</p>';
 } else {
   boot();
