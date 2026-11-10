@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-10
+- Bank can Pause and Resume: no new hands while paused, bets can still go in. Close table mid-hand used to fail with an error only the bank saw; now it closes right after the hand is paid ("Closing after this hand"). Peels faster (0.7s, hold 0.45s). sound.js plays recordings from sounds/ when listed in SAMPLED, synth otherwise.
 - Home game suspense: doubles are dealt face down and sideways. The dealer plays out first, then the table waits while you hold your double to peel it (or the bank hits "Turn over doubles"). A busted face-down double still makes the dealer draw, so nothing leaks. The dealer's hole card peels up and hangs a beat before it comes off, dealer draws land one at a time, and totals and results show after the last card.
 - Sound (sound.js, synthesized with Web Audio, no files): deal, peel, flip, chips, your-turn ping, win, blackjack, lose, push.
 - Settings button on the table: sound on or off, volume, and animations (Full with peels, Quick, Off). Saved per viewer in the browser.

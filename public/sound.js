@@ -1,5 +1,6 @@
-// Small synthesized table sounds. No audio files: short noise bursts and tones from Web Audio.
-// Browsers only allow sound after a tap or key press, so the context wakes on the first one.
+// Table sounds. Card and chip sounds are recordings in sounds/ (name-1.mp3, name-2.mp3, ...; a random
+// one plays each time so repeats do not sound robotic). Anything without a recording falls back to a
+// small synthesized sound. Browsers only allow sound after a tap or key press, so the context wakes then.
 
 const KEY = 'tc-sound';
 let prefs = { on: true, volume: 0.6 };
@@ -8,6 +9,22 @@ try { prefs = { ...prefs, ...JSON.parse(localStorage.getItem(KEY)) }; } catch { 
 let ctx = null;
 let master = null;
 let noiseBuf = null;
+// How many recordings each sound has in sounds/ (name-1.mp3 ... name-N.mp3). Empty = synthesized.
+const SAMPLED = {};
+const samples = {};
+
+async function loadSamples() {
+  for (const [name, count] of Object.entries(SAMPLED)) {
+    samples[name] = [];
+    for (let i = 1; i <= count; i += 1) {
+      try {
+        const res = await fetch(`sounds/${name}-${i}.mp3`);
+        if (!res.ok) break;
+        samples[name].push(await ctx.decodeAudioData(await res.arrayBuffer()));
+      } catch { break; }
+    }
+  }
+}
 
 function wake() {
   if (!ctx) {
@@ -20,6 +37,7 @@ function wake() {
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i += 1) d[i] = Math.random() * 2 - 1;
+    loadSamples();
   }
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
@@ -79,7 +97,17 @@ const SOUNDS = {
 
 // Plays a sound `delayMs` from now. Silently does nothing until the page has been tapped once.
 export function play(name, delayMs = 0) {
-  if (!prefs.on || !SOUNDS[name]) return;
+  if (!prefs.on) return;
   if (!ctx || ctx.state !== 'running') return;
-  SOUNDS[name](ctx.currentTime + delayMs / 1000);
+  const t = ctx.currentTime + delayMs / 1000;
+  const recs = samples[name];
+  if (recs?.length) {
+    const src = ctx.createBufferSource();
+    src.buffer = recs[Math.floor(Math.random() * recs.length)];
+    src.playbackRate.value = 0.96 + Math.random() * 0.08;
+    src.connect(master);
+    src.start(t);
+    return;
+  }
+  SOUNDS[name]?.(t);
 }

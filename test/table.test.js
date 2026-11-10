@@ -199,3 +199,26 @@ test('the bank can turn over a double nobody peels', () => {
   assert.equal(g.phase, 'betting');
   assert.equal(g.player('a').lastNet, 20);
 });
+
+test('pause holds the next deal, resume deals it', () => {
+  const g = table();
+  g.setPaused(true);
+  g.bet('a', 10);
+  assert.equal(g.round, 0);
+  assert.throws(() => g.dealNow(), /paused/);
+  g.setPaused(false);
+  assert.equal(g.round, 1);
+});
+
+test('closing mid-hand closes right after the hand is paid', () => {
+  const g = table();
+  rig(g, ['10', '9', '6', '7']);
+  g.bet('a', 10);
+  assert.equal(g.phase, 'play');
+  g.close();
+  assert.equal(g.closed, false);
+  assert.equal(g.closeAfter, true);
+  g.act('a', 'stand');
+  assert.equal(g.closed, true);
+  assert.equal(g.player('a').lastNet, -10); // dealer 16 draws a 5
+});

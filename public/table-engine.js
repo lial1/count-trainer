@@ -50,6 +50,8 @@ export class TableGame {
     this.log = [];
     this.closed = false;
     this.closeReason = '';
+    this.paused = false;
+    this.closeAfter = false;
     this.shoeNo = 0;
     this.requests = [];
     this.reqId = 0;
@@ -228,8 +230,16 @@ export class TableGame {
     return p.stack >= this.cfg.minBet || p.status === 'bet';
   }
 
+  // Bank: hold off dealing. A hand in progress plays out; bets can still go in.
+  setPaused(on) {
+    this.open();
+    this.paused = Boolean(on);
+    this.note(this.paused ? 'The bank paused the game.' : 'The bank resumed the game.');
+    this.maybeDeal();
+  }
+
   maybeDeal() {
-    if (this.phase !== 'betting' || this.closed) return;
+    if (this.phase !== 'betting' || this.closed || this.paused) return;
     const waiting = this.players.filter((p) => this.canPlay(p) && p.status === 'none');
     if (!waiting.length && this.players.some((p) => p.status === 'bet')) this.deal();
   }
@@ -237,6 +247,7 @@ export class TableGame {
   // Bank: deal now without waiting. Anyone who has not bet just misses this hand.
   dealNow() {
     this.open();
+    if (this.paused) throw new Error('The game is paused');
     if (this.phase !== 'betting') throw new Error('A hand is already going');
     if (!this.players.some((p) => p.status === 'bet')) throw new Error('Nobody has bet yet');
     this.deal();
@@ -444,10 +455,17 @@ export class TableGame {
     }
     this.phase = 'betting';
     if (this.bankNet <= -this.cfg.stopLoss) this.close(`Stop loss hit: the bank is down ${money(-this.bankNet)}.`);
+    else if (this.closeAfter) this.close();
   }
 
   close(reason = 'The bank closed the table.') {
-    if (this.inRound) throw new Error('Finish this hand first');
+    // Mid-hand, the table closes as soon as this hand is paid.
+    if (this.inRound) {
+      this.closeAfter = true;
+      this.note('The table closes after this hand.');
+      return;
+    }
+    this.closeAfter = false;
     for (const p of this.players) this.unbet(p);
     this.closed = true;
     this.closeReason = reason;
@@ -489,6 +507,8 @@ export class TableGame {
       round: this.round,
       closed: this.closed,
       closeReason: this.closeReason,
+      paused: this.paused,
+      closeAfter: this.closeAfter,
       dealer: hidden ? [this.dealer[0], { hidden: true, id: `h${this.round}` }] : this.dealer,
       turn: this.turn,
       decks: this.cfg.decks,

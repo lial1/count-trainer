@@ -14,9 +14,9 @@ const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const LABELS = { hit: ['Hit', 'H'], stand: ['Stand', 'S'], double: ['Double', 'D'], split: ['Split', 'P'], surrender: ['Surrender', 'R'] };
 const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const PING_MS = 8000;
-const STAGGER = 220; // between dealt cards
-const PEEL_MS = 1100; // dealer's hole card, or a double nobody peeled, turning over
-const QUICK_MS = 380; // a double its owner already squeezed up
+const STAGGER = 180; // between dealt cards
+const PEEL_MS = 700; // dealer's hole card, or a double nobody peeled, turning over
+const QUICK_MS = 280; // a double its owner already squeezed up
 const DEAL_MS = 260;
 let animMode = 'full'; // full: peels and suspense; quick: fast deals, plain flips; off: cards just appear
 try { animMode = JSON.parse(localStorage.getItem('tc-anim')) || 'full'; } catch { /* default */ }
@@ -295,7 +295,7 @@ function planFelt(v) {
   for (const e of events) {
     S.anim.set(e.key, { kind: e.kind, at: now + t });
     if (e.kind === 'deal') { play('deal', t); t += stagger; }
-    else if (e.kind === 'peel') { play('peel', t); play('flip', t + PEEL_MS * 0.78); t += PEEL_MS + 150; }
+    else if (e.kind === 'peel') { play('peel', t); play('flip', t + PEEL_MS * 0.78); t += PEEL_MS + 80; }
     else { play('flip', t + 120); t += QUICK_MS; if (S.squeeze === e.key) S.squeeze = null; }
     S.peeling.delete(e.key);
   }
@@ -397,7 +397,9 @@ function renderTop() {
   const dot = S.net === 'online' ? 'on' : S.net === 'connecting' ? '' : 'off';
   const label = { online: 'Online', connecting: 'Connecting', away: 'Bank is away' }[S.net];
   const bankBtns = S.role === 'bank' && S.view && !S.view.closed
-    ? `<button class="ghost" id="openLimits">Limits</button><button class="ghost" id="closeTable">${S.closeArm ? 'Tap again to close' : 'Close table'}</button>`
+    ? `<button class="ghost" id="pauseGame" aria-pressed="${S.view.paused}">${S.view.paused ? 'Resume' : 'Pause'}</button><button class="ghost" id="openLimits">Limits</button>${S.view.closeAfter
+      ? '<button class="ghost" disabled>Closing after this hand</button>'
+      : `<button class="ghost" id="closeTable">${S.closeArm ? 'Tap again to close' : 'Close table'}</button>`}`
     : S.role === 'bank' && S.view?.closed ? '<button class="ghost" id="newTable">New game</button>' : '';
   $('topActions').innerHTML = `<span class="ghost" style="border:0"><span class="dot ${dot}"></span>${label}</span>
     <span class="code" title="Table code">${esc(S.code)}</span>
@@ -405,6 +407,12 @@ function renderTop() {
 }
 
 function statusLine(v) {
+  const line = statusCore(v);
+  if (!v || v.closed || !v.closeAfter) return line;
+  return `${line} <b>Table closes after this hand.</b>`;
+}
+
+function statusCore(v) {
   if (!v) {
     if (S.net === 'away') return `Can't find the bank for table ${esc(S.code)}. Their page has to be open. Still trying.`;
     return `Connecting to table ${esc(S.code)}…`;
@@ -427,6 +435,7 @@ function statusLine(v) {
     return v.turn.pid === pid ? '<b>Your turn</b>' : `<b>${esc(nameOf(v, v.turn.pid))}</b>'s turn`;
   }
   const wait = waitingOn(v);
+  if (v.paused && v.phase === 'betting') return `<b>Paused.</b> ${S.role === 'bank' ? 'Hit Resume to deal again.' : 'Cards come out when the game resumes.'}`;
   if (v.phase === 'insurance') return `Dealer shows an ace. Insurance? ${wait.length ? `Waiting on ${esc(wait.join(', '))}` : ''}`;
   if (!v.players.length) return S.role === 'bank' ? 'Copy the invite link and send it. You approve each seat.' : 'Nobody is seated yet.';
   if (mine && mine.status === 'bet' && wait.length) return `Bet in. Waiting on ${esc(wait.join(', '))}`;
@@ -512,7 +521,7 @@ function renderControls(v) {
   if (S.role === 'bank') {
     if (v.phase === 'betting') {
       const any = v.players.some((p) => p.status === 'bet');
-      return any ? '<button class="act primary" id="dealNow">Deal now</button>' : '';
+      return any && !v.paused ? '<button class="act primary" id="dealNow">Deal now</button>' : '';
     }
     if (v.phase === 'insurance') return '<button class="act" id="skip">Skip insurance</button>';
     if (v.phase === 'play' && v.turn) return `<button class="act" id="skip">Stand for ${esc(nameOf(v, v.turn.pid))}</button>`;
@@ -613,6 +622,7 @@ document.addEventListener('click', (e) => {
   if ('close' in t.dataset) { t.closest('dialog').close(); return; }
   if (t.id === 'copyInvite') copyInvite();
   else if (t.id === 'openSettings') openSettings();
+  else if (t.id === 'pauseGame') bank((g) => g.setPaused(!g.paused));
   else if (t.id === 'openLimits') openLimits();
   else if (t.id === 'closeTable') {
     if (!S.closeArm) { S.closeArm = true; draw(); setTimeout(() => { S.closeArm = false; draw(); }, 3000); return; }
@@ -663,7 +673,7 @@ document.addEventListener('submit', (e) => {
 
 // Hold your face-down double to peel it: the corner lifts while you hold, and it turns over
 // once you have held long enough. Let go early and it drops back.
-const SQUEEZE_MS = 800;
+const SQUEEZE_MS = 450;
 document.addEventListener('pointerdown', (e) => {
   const el = e.target.closest('[data-peel]');
   if (!el || S.squeeze) return;
