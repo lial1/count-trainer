@@ -1,0 +1,6 @@
+{
+  "cleanUrls": true,
+  "redirects": [
+    { "source": "/table", "destination": "/play", "permanent": true }
+  ]
+}
