@@ -112,7 +112,7 @@ export class TableGame {
   }
 
   get inRound() {
-    return this.phase === 'insurance' || this.phase === 'play';
+    return this.phase === 'insurance' || this.phase === 'play' || this.phase === 'peel';
   }
 
   /* ---------- seats ---------- */
@@ -345,7 +345,9 @@ export class TableGame {
       p.stack = round2(p.stack - h.bet);
       h.bet *= 2;
       h.doubled = true;
+      // Dealt face down, like a casino double. The player can peel it, otherwise it turns over at the end.
       h.cards.push(this.draw());
+      h.down = true;
       h.done = true;
     } else if (action === 'surrender') {
       h.surrendered = true;
@@ -378,6 +380,10 @@ export class TableGame {
     } else if (this.phase === 'insurance') {
       for (const p of this.players) if (p.hands.length && p.ins === null) p.ins = false;
       this.peek();
+    } else if (this.phase === 'peel') {
+      this.note('Bank turned over the doubles.');
+      for (const p of this.players) for (const h of p.hands) h.down = false;
+      this.payout();
     } else {
       this.dealNow();
     }
@@ -387,11 +393,22 @@ export class TableGame {
     this.holeHidden = false;
     this.turn = null;
     const dealerBJ = handValue(this.dealer).total === 21 && this.dealer.length === 2;
+    // A face-down double counts as live even if it busted, so the dealer's play gives nothing away.
     const live = this.players.some((p) => p.hands.some((h) =>
-      !h.surrendered && handValue(h.cards).total <= 21 && !this.isBlackjack(h)));
+      !h.surrendered && (h.down || handValue(h.cards).total <= 21) && !this.isBlackjack(h)));
     if (live && !dealerBJ) {
       while (handValue(this.dealer).total < 17) this.dealer.push(this.draw());
     }
+    // Like a real table: the dealer finishes first, then whoever doubled peels their card.
+    if (this.players.some((p) => p.hands.some((h) => h.down))) {
+      this.phase = 'peel';
+      return;
+    }
+    this.payout();
+  }
+
+  payout() {
+    const dealerBJ = handValue(this.dealer).total === 21 && this.dealer.length === 2;
     const dealerTotal = handValue(this.dealer).total;
     for (const p of this.players) {
       if (!p.hands.length) continue;
@@ -419,7 +436,7 @@ export class TableGame {
       }
       p.lastNet = round2(net);
       // Hands stay on the felt until the next deal, but no money is in them any more.
-      for (const h of p.hands) h.settled = true;
+      for (const h of p.hands) { h.settled = true; h.down = false; }
       p.insBet = 0;
       p.status = 'none';
       p.wager = 0;
@@ -435,6 +452,15 @@ export class TableGame {
     this.closed = true;
     this.closeReason = reason;
     this.note(reason);
+  }
+
+  // The player turns over their own face-down double.
+  peel(pid, index) {
+    if (!this.inRound) throw new Error('Nothing to peel');
+    const h = this.player(pid).hands[Number(index)];
+    if (!h || !h.down) throw new Error('Nothing to peel');
+    h.down = false;
+    if (this.phase === 'peel' && !this.players.some((p) => p.hands.some((x) => x.down))) this.payout();
   }
 
   setLimits({ minBet, maxBet, stopLoss }) {
@@ -484,7 +510,9 @@ export class TableGame {
         lastNet: p.lastNet,
         ins: p.ins,
         insNet: p.insNet,
-        hands: p.hands,
+        hands: p.hands.map((h, i) => (h.down
+          ? { ...h, cards: [...h.cards.slice(0, -1), { hidden: true, side: true, id: `d${this.round}-${p.pid}-${i}` }] }
+          : h)),
         legal: this.legal(p.pid),
       })),
     };

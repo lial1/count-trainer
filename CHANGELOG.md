@@ -1,6 +1,9 @@
 # Changelog
 
 ## 2026-11-10
+- Home game suspense: doubles are dealt face down and sideways. The dealer plays out first, then the table waits while you hold your double to peel it (or the bank hits "Turn over doubles"). A busted face-down double still makes the dealer draw, so nothing leaks. The dealer's hole card peels up and hangs a beat before it comes off, dealer draws land one at a time, and totals and results show after the last card.
+- Sound (sound.js, synthesized with Web Audio, no files): deal, peel, flip, chips, your-turn ping, win, blackjack, lose, push.
+- Settings button on the table: sound on or off, volume, and animations (Full with peels, Quick, Off). Saved per viewer in the browser.
 - Home game lives at /play now (was /table.html). vercel.json turns on clean URLs, so no .html in addresses; /table and /table.html redirect to /play.
 - Home game no longer uses peer to peer. A friend on another network could not connect (stuck on Connecting) because PeerJS's free relay and Metered's open relay are both dead. Moves now go through two free public MQTT brokers (HiveMQ and EMQX) at once, so it works on any network and survives one broker going down. Everything is AES-GCM encrypted with a key that only lives in the invite link after the # (never sent to any server); the room topic is a hash of code and key. Invite links are now CODE.KEY; old links show "Old invite link". Players see "Bank is away" if the bank's page closes. Removed PeerJS and the TURN hook.
 - Home game connection fixes: a player whose network blocks the direct link now sees "Can't reach the bank" instead of spinning forever; a second tab of the same table in the bank's browser says "Already open" instead of fighting over the table. Found that PeerJS's free relay (TURN) is dead, so players on cell data or strict Wi-Fi cannot connect; added a TURN_CREDENTIALS_URL hook in table.js for a Metered free relay.

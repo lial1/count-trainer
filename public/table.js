@@ -5,6 +5,7 @@
 import { handValue } from './engine.js';
 import { TableGame, money, cleanConfig, DEFAULTS, MAX_BUY_IN } from './table-engine.js';
 import { openRoom, newKey, validKey } from './net.js';
+import { play, soundPrefs, setSound } from './sound.js';
 
 const $ = (id) => document.getElementById(id);
 const SUIT = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
@@ -13,6 +14,12 @@ const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const LABELS = { hit: ['Hit', 'H'], stand: ['Stand', 'S'], double: ['Double', 'D'], split: ['Split', 'P'], surrender: ['Surrender', 'R'] };
 const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
 const PING_MS = 8000;
+const STAGGER = 220; // between dealt cards
+const PEEL_MS = 1100; // dealer's hole card, or a double nobody peeled, turning over
+const QUICK_MS = 380; // a double its owner already squeezed up
+const DEAL_MS = 260;
+let animMode = 'full'; // full: peels and suspense; quick: fast deals, plain flips; off: cards just appear
+try { animMode = JSON.parse(localStorage.getItem('tc-anim')) || 'full'; } catch { /* default */ }
 const AWAY_MS = 25000;
 
 const store = {
@@ -28,7 +35,10 @@ if (!pid) { pid = crypto.randomUUID(); store.set('tc-pid', pid); }
 
 const S = {
   role: null, code: '', key: '', game: null, view: null, room: null, net: 'connecting',
-  seen: new Map(), lastState: 0, stateAt: 0, flash: '', flashTimer: 0, shown: new Set(), closeArm: false,
+  seen: new Map(), lastState: 0, stateAt: 0, flash: '', flashTimer: 0, closeArm: false,
+  // Card animation bookkeeping: what each card slot showed last, and animations still running.
+  slots: new Map(), anim: new Map(), lateAt: 0, primed: false, feltSig: '',
+  squeeze: null, squeezeTimer: 0, peeling: new Set(), resultRound: 0, wasMyTurn: false,
 };
 
 /* ---------- start ---------- */
@@ -175,6 +185,7 @@ function onHostMsg(msg) {
     else if (msg.t === 'act') g.act(who, String(msg.action));
     else if (msg.t === 'insurance') g.insurance(who, Boolean(msg.take));
     else if (msg.t === 'cashout') g.cashOut(who);
+    else if (msg.t === 'peel') g.peel(who, msg.hand);
     else return;
   } catch (e) {
     S.room?.publish(`to/${who}`, { t: 'err', text: e.message });
@@ -212,7 +223,11 @@ async function startClient(code, key) {
         S.lastState = Date.now();
         S.net = 'online';
         draw();
-      } else if (msg.t === 'err') flash(msg.text);
+      } else if (msg.t === 'err') {
+        // A failed peel should not leave the card stuck half lifted.
+        if (S.squeeze) { S.squeeze = null; S.peeling.clear(); S.feltSig = ''; }
+        flash(msg.text);
+      }
     },
   });
   setInterval(() => {
@@ -237,16 +252,88 @@ function flash(text) {
   draw();
 }
 
-function cardHtml(card, round) {
-  const key = `${round}:${card.id}`;
-  const fresh = !S.shown.has(key);
-  S.shown.add(key);
-  if (card.hidden) return `<div class="card back ${fresh ? 'new' : ''}" role="img" aria-label="Face down card"></div>`;
-  const red = card.suit === 'hearts' || card.suit === 'diamonds';
+function faceInner(card) {
   const s = SUIT[card.suit] + TEXT;
   const corner = `<b>${card.rank}</b><i>${s}</i>`;
-  return `<div class="card ${red ? 'red' : ''} ${fresh ? 'new' : ''}" role="img" aria-label="${card.rank} of ${card.suit}">
-    <span class="corner">${corner}</span><span class="pip">${s}</span><span class="corner flip">${corner}</span></div>`;
+  return `<span class="corner">${corner}</span><span class="pip">${s}</span><span class="corner flip">${corner}</span>`;
+}
+
+// Works out which cards are new or newly face up since the last update, and gives each a start time:
+// the deal goes round the table, the dealer's hole card peels before the dealer draws, and a double
+// nobody peeled turns over last. Sounds are scheduled to match.
+function planFelt(v) {
+  const now = performance.now();
+  const events = [];
+  const look = (key, card, order, revealOrder) => {
+    const prev = S.slots.get(key);
+    S.slots.set(key, card.hidden ? 'down' : 'up');
+    if (!S.primed) return;
+    if (!prev) events.push({ key, kind: 'deal', order });
+    else if (prev === 'down' && !card.hidden) {
+      const quick = S.peeling.has(key);
+      events.push({ key, kind: quick ? 'quick' : 'peel', order: quick ? -1 : revealOrder });
+    }
+  };
+  v.dealer.forEach((c, i) => look(`${v.round}:D:0:${i}`, c, i === 0 ? 1 : i === 1 ? 3 : 100 + i, 99));
+  v.players.forEach((p, pi) => p.hands.forEach((h, hi) => h.cards.forEach((c, ci) => {
+    const order = hi === 0 && ci === 0 ? pi / 100 : hi === 0 && ci === 1 ? 2 + pi / 100 : 50 + pi + hi / 10 + ci / 100;
+    look(`${v.round}:${p.pid}:${hi}:${ci}`, c, order, 200 + pi + hi / 10);
+  })));
+  S.primed = true;
+  if (!events.length) return;
+  events.sort((a, b) => a.order - b.order);
+  if (animMode === 'off') {
+    for (const e of events) S.peeling.delete(e.key);
+    S.squeeze = null;
+    play(events.some((e) => e.kind !== 'deal') ? 'flip' : 'deal');
+    S.lateAt = 0;
+    return;
+  }
+  if (animMode === 'quick') for (const e of events) if (e.kind === 'peel') e.kind = 'quick';
+  const stagger = animMode === 'quick' ? 110 : STAGGER;
+  let t = Math.max(0, S.lateAt - now);
+  for (const e of events) {
+    S.anim.set(e.key, { kind: e.kind, at: now + t });
+    if (e.kind === 'deal') { play('deal', t); t += stagger; }
+    else if (e.kind === 'peel') { play('peel', t); play('flip', t + PEEL_MS * 0.78); t += PEEL_MS + 150; }
+    else { play('flip', t + 120); t += QUICK_MS; if (S.squeeze === e.key) S.squeeze = null; }
+    S.peeling.delete(e.key);
+  }
+  S.lateAt = now + t;
+}
+
+const ANIM_MS = { deal: DEAL_MS, peel: PEEL_MS, quick: QUICK_MS };
+
+function cardHtml(key, card, { side = false, peel = null } = {}) {
+  const now = performance.now();
+  const a = S.anim.get(key);
+  const until = a ? a.at - now : 0;
+  const running = a && until + ANIM_MS[a.kind] > 0;
+  if (a && !running) S.anim.delete(key);
+  // A negative delay picks an animation up where it was if the table redraws mid-way.
+  const d = running ? `--d:${Math.round(until)}ms` : '';
+  const kind = running ? a.kind : '';
+  let html;
+  if (card.hidden) {
+    html = `<div class="card back ${kind === 'deal' ? 'new' : ''}" style="${d}" role="img" aria-label="Face down card"></div>`;
+  } else {
+    const red = card.suit === 'hearts' || card.suit === 'diamonds' ? 'red' : '';
+    const label = `role="img" aria-label="${card.rank} of ${card.suit}"`;
+    if (kind === 'peel' || kind === 'quick') {
+      html = `<div class="card ${red} turning" ${label}>${faceInner(card)}<div class="peel-back ${kind}" style="${d}"></div></div>`;
+    } else {
+      html = `<div class="card ${red} ${kind === 'deal' ? 'new' : ''}" style="${d}" ${label}>${faceInner(card)}</div>`;
+    }
+  }
+  if (!side) return html;
+  const grip = peel !== null ? `peelable ${S.squeeze === key ? 'squeeze' : ''}" data-peel="${peel}" data-slot="${key}" title="Hold to peel` : '';
+  return `<div class="side ${grip}">${html}</div>`;
+}
+
+// Totals and results wait until the last card in flight has landed.
+function lateAttr() {
+  const wait = Math.round(S.lateAt - performance.now());
+  return wait > 0 ? ` late" style="animation-delay:${wait}ms` : '';
 }
 
 function totalLabel(cards) {
@@ -314,7 +401,7 @@ function renderTop() {
     : S.role === 'bank' && S.view?.closed ? '<button class="ghost" id="newTable">New game</button>' : '';
   $('topActions').innerHTML = `<span class="ghost" style="border:0"><span class="dot ${dot}"></span>${label}</span>
     <span class="code" title="Table code">${esc(S.code)}</span>
-    <button class="ghost" id="copyInvite">Copy invite link</button>${bankBtns}`;
+    <button class="ghost" id="copyInvite">Copy invite link</button><button class="ghost" id="openSettings">Settings</button>${bankBtns}`;
 }
 
 function statusLine(v) {
@@ -325,6 +412,17 @@ function statusLine(v) {
   if (v.closed) return `<b>Table closed.</b> ${esc(v.closeReason)}`;
   if (S.role === 'player' && S.net === 'away') return "<b>The bank's page is closed or asleep.</b> Your seat and chips are saved.";
   const mine = me(v);
+  const myDown = mine?.hands.some((h) => h.doubled && h.cards[2]?.hidden);
+  if (v.phase === 'peel') {
+    const dealer = `Dealer has <b>${totalLabel(v.dealer)}</b>.`;
+    if (myDown) return `${dealer} Hold your double to peel it.`;
+    const who = v.players.filter((p) => p.hands.some((h) => h.doubled && h.cards[2]?.hidden)).map((p) => p.name);
+    return `${dealer} Waiting on ${esc(who.join(', '))} to peel.`;
+  }
+  if (myDown && v.phase === 'play') {
+    const turn = v.turn && v.turn.pid !== pid ? ` <b>${esc(nameOf(v, v.turn.pid))}</b>'s turn.` : '';
+    return `Hold your double to peel it.${turn}`;
+  }
   if (v.phase === 'play' && v.turn) {
     return v.turn.pid === pid ? '<b>Your turn</b>' : `<b>${esc(nameOf(v, v.turn.pid))}</b>'s turn`;
   }
@@ -335,25 +433,42 @@ function statusLine(v) {
   return wait.length ? `Place your bets. Waiting on ${esc(wait.join(', '))}` : 'Place your bets';
 }
 
+function feltSignature(v) {
+  return JSON.stringify([v.round, v.phase, v.dealer, v.turn, v.online, v.cfg.minBet, v.cfg.maxBet,
+    v.players.map((p) => [p.pid, p.name, p.stack, p.status, p.wager, p.ins, p.insNet, p.hands])]);
+}
+
 function renderFelt(v) {
+  // Redrawing the same table would restart nothing, but it is wasted work on every status ping.
+  const sig = feltSignature(v);
+  if (sig === S.feltSig) return;
+  S.feltSig = sig;
+  planFelt(v);
   const r = v.round;
-  $('dealer').innerHTML = `<div class="cards">${v.dealer.map((c) => cardHtml(c, r)).join('')}</div>
-    <div class="meta"><span class="total">${totalLabel(v.dealer)}</span><span class="tag" style="font-size:12px;opacity:.8">${esc(v.cfg.bankName)} (bank)</span></div>`;
+  const late = lateAttr();
+  $('dealer').innerHTML = `<div class="cards">${v.dealer.map((c, i) => cardHtml(`${r}:D:0:${i}`, c)).join('')}</div>
+    <div class="meta"><span class="total${late}">${totalLabel(v.dealer)}</span><span class="tag" style="font-size:12px;opacity:.8">${esc(v.cfg.bankName)} (bank)</span></div>`;
   const seats = $('seats');
   seats.className = `seats ${v.players.length > 3 ? 'many' : ''}`;
   seats.innerHTML = v.players.map((p) => {
     const online = v.online ? v.online.includes(p.pid) : true;
+    const mine = S.role === 'player' && p.pid === pid;
     const hands = p.hands.length
       ? p.hands.map((h, i) => {
           const active = v.turn && v.turn.pid === p.pid && v.turn.hand === i && p.hands.length > 1;
-          const res = h.result ? `<span class="result ${h.net > 0 ? 'win' : h.net < 0 ? 'lose' : ''}">${WORD[h.result]}${h.net ? ` ${signedMoney(h.net)}` : ''}</span>` : '';
-          return `<div class="hand ${active ? 'active' : ''}"><div class="cards">${h.cards.map((c) => cardHtml(c, r)).join('')}</div>
-            <div class="meta"><span class="total">${totalLabel(h.cards)}</span><span class="spot">${money(h.bet)}</span>${res}</div></div>`;
+          const res = h.result ? `<span class="result ${h.net > 0 ? 'win' : h.net < 0 ? 'lose' : ''}${late}">${WORD[h.result]}${h.net ? ` ${signedMoney(h.net)}` : ''}</span>` : '';
+          const cards = h.cards.map((c, ci) => {
+            const side = Boolean(h.doubled && ci === 2);
+            const peel = mine && side && c.hidden && (v.phase === 'play' || v.phase === 'peel') ? i : null;
+            return cardHtml(`${r}:${p.pid}:${i}:${ci}`, c, { side, peel });
+          }).join('');
+          return `<div class="hand ${active ? 'active' : ''}"><div class="cards">${cards}</div>
+            <div class="meta"><span class="total${late}">${totalLabel(h.cards)}</span><span class="spot">${money(h.bet)}</span>${res}</div></div>`;
         }).join('')
       : p.status === 'bet' ? `<div class="meta"><span class="spot">${money(p.wager)}</span></div>` : '';
-    const ins = p.ins && p.insNet ? `<span class="result ${p.insNet > 0 ? 'win' : 'lose'}">Insurance ${signedMoney(p.insNet)}</span>` : p.ins ? '<span class="tag">Insured</span>' : '';
+    const ins = p.ins && p.insNet ? `<span class="result ${p.insNet > 0 ? 'win' : 'lose'}${late}">Insurance ${signedMoney(p.insNet)}</span>` : p.ins ? '<span class="tag">Insured</span>' : '';
     const tag = !online ? 'Offline' : p.status === 'out' ? 'Sitting out' : p.stack < v.cfg.minBet && !p.hands.length && p.status !== 'bet' ? 'Needs chips' : '';
-    return `<div class="seat ${v.turn?.pid === p.pid ? 'turn' : ''} ${p.pid === pid && S.role === 'player' ? 'me' : ''}">
+    return `<div class="seat ${v.turn?.pid === p.pid ? 'turn' : ''} ${mine ? 'me' : ''}">
       <div class="hands">${hands}</div>${ins}
       <span class="name">${esc(p.name)}</span><span class="stack">${money(p.stack)}</span>${tag ? `<span class="tag">${tag}</span>` : ''}</div>`;
   }).join('');
@@ -363,6 +478,33 @@ function renderFelt(v) {
     `<div class="tray-tick" style="bottom:${((i + 1) / v.decks) * 100}%"></div>`).join('');
   $('tray').innerHTML = `<div class="tray-box"><div class="tray-fill" style="height:${Math.min(100, (v.discarded / total) * 100)}%"></div>${ticks}</div><span>Discards</span>`;
   $('shoe').innerHTML = `${v.decks} deck shoe<br><span style="font:500 12px var(--sans);opacity:.8">Bets ${money(v.cfg.minBet)} to ${money(v.cfg.maxBet)}</span>`;
+  roundSounds(v);
+}
+
+// One result sound per hand, after the cards land, and a ping when it becomes your turn.
+function roundSounds(v) {
+  const mine = me(v);
+  const myTurn = Boolean(mine && ((v.turn && v.turn.pid === pid) || (v.phase === 'insurance' && mine.hands.length && mine.ins === null)
+    || (v.phase === 'peel' && mine.hands.some((h) => h.doubled && h.cards[2]?.hidden))));
+  const wait = Math.max(0, S.lateAt - performance.now());
+  const settled = v.phase === 'betting' && v.players.some((p) => p.hands.some((h) => h.result));
+  // Opening the page mid-game should not replay the last hand's sounds.
+  if (!S.soundPrimed) {
+    S.soundPrimed = true;
+    S.wasMyTurn = myTurn;
+    S.resultRound = v.round;
+    return;
+  }
+  if (myTurn && !S.wasMyTurn) play('turn', wait);
+  S.wasMyTurn = myTurn;
+  if (!settled || S.resultRound === v.round) return;
+  S.resultRound = v.round;
+  let net;
+  if (S.role === 'bank') net = -v.players.reduce((n, p) => n + (p.hands.length ? p.lastNet || 0 : 0), 0);
+  else if (mine?.hands.length) net = mine.lastNet;
+  else return;
+  const bj = S.role === 'player' && mine.hands.some((h) => h.result === 'blackjack');
+  play(bj ? 'blackjack' : net > 0 ? 'win' : net < 0 ? 'lose' : 'push', wait + 150);
 }
 
 function renderControls(v) {
@@ -374,6 +516,7 @@ function renderControls(v) {
     }
     if (v.phase === 'insurance') return '<button class="act" id="skip">Skip insurance</button>';
     if (v.phase === 'play' && v.turn) return `<button class="act" id="skip">Stand for ${esc(nameOf(v, v.turn.pid))}</button>`;
+    if (v.phase === 'peel') return '<button class="act" id="skip">Turn over doubles</button>';
     return '';
   }
 
@@ -388,7 +531,7 @@ function renderControls(v) {
   }
 
   let main = '';
-  const inHand = mine.hands.length && (v.phase === 'play' || v.phase === 'insurance');
+  const inHand = mine.hands.length && (v.phase === 'play' || v.phase === 'insurance' || v.phase === 'peel');
   if (v.phase === 'betting' && mine.stack + (mine.status === 'bet' ? mine.wager : 0) >= v.cfg.minBet) {
     const def = mine.status === 'bet' ? mine.wager : Math.min(v.cfg.maxBet, Math.max(v.cfg.minBet, mine.lastWager || v.cfg.minBet));
     main = `<form class="betbox" id="betForm">
@@ -446,6 +589,16 @@ function openLimits() {
   $('limits').showModal();
 }
 
+function openSettings() {
+  const p = soundPrefs();
+  const opt = (v, label) => `<option value="${v}" ${animMode === v ? 'selected' : ''}>${label}</option>`;
+  $('setBody').innerHTML = `
+    <label class="field">Sound<input type="checkbox" id="sOn" ${p.on ? 'checked' : ''}></label>
+    <label class="field">Volume<input type="range" id="sVol" min="0" max="1" step="0.05" value="${p.volume}" style="accent-color:var(--brass)"></label>
+    <label class="field">Animations<select id="sAnim">${opt('full', 'Full, with peels')}${opt('quick', 'Quick')}${opt('off', 'Off')}</select></label>`;
+  $('setDlg').showModal();
+}
+
 /* ---------- events ---------- */
 
 async function copyInvite() {
@@ -459,6 +612,7 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   if ('close' in t.dataset) { t.closest('dialog').close(); return; }
   if (t.id === 'copyInvite') copyInvite();
+  else if (t.id === 'openSettings') openSettings();
   else if (t.id === 'openLimits') openLimits();
   else if (t.id === 'closeTable') {
     if (!S.closeArm) { S.closeArm = true; draw(); setTimeout(() => { S.closeArm = false; draw(); }, 3000); return; }
@@ -490,8 +644,10 @@ document.addEventListener('submit', (e) => {
     if (!Number.isInteger(amount) || amount <= 0 || amount > MAX_BUY_IN) { flash('Buy-in has to be a whole dollar amount'); return; }
     store.set('tc-name', name);
     send({ t: 'request', name, amount });
-  } else if (f.id === 'betForm') send({ t: 'bet', amount: Number($('betAmt').value) });
-  else if (f.id === 'buyForm') {
+  } else if (f.id === 'betForm') {
+    play('chip');
+    send({ t: 'bet', amount: Number($('betAmt').value) });
+  } else if (f.id === 'buyForm') {
     const amount = Number($('buyAmt').value);
     if (!Number.isInteger(amount) || amount <= 0) { flash('Buy-in has to be a whole dollar amount'); return; }
     send({ t: 'request', amount });
@@ -502,6 +658,42 @@ document.addEventListener('submit', (e) => {
       $('limits').close();
       publish();
     } catch (err) { $('limitsErr').textContent = err.message; }
+  }
+});
+
+// Hold your face-down double to peel it: the corner lifts while you hold, and it turns over
+// once you have held long enough. Let go early and it drops back.
+const SQUEEZE_MS = 800;
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest('[data-peel]');
+  if (!el || S.squeeze) return;
+  e.preventDefault();
+  S.squeeze = el.dataset.slot;
+  el.classList.add('squeeze');
+  play('peel');
+  const hand = Number(el.dataset.peel);
+  const slot = el.dataset.slot;
+  S.squeezeTimer = setTimeout(() => {
+    S.squeezeTimer = 0;
+    S.peeling.add(slot);
+    send({ t: 'peel', hand });
+  }, animMode === 'full' ? SQUEEZE_MS : animMode === 'quick' ? 300 : 0);
+});
+function letGo() {
+  if (!S.squeeze || !S.squeezeTimer) return;
+  clearTimeout(S.squeezeTimer);
+  S.squeezeTimer = 0;
+  document.querySelector(`[data-slot="${S.squeeze}"]`)?.classList.remove('squeeze');
+  S.squeeze = null;
+}
+for (const ev of ['pointerup', 'pointercancel']) document.addEventListener(ev, letGo);
+
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'sOn') { setSound({ on: e.target.checked }); play('chip'); }
+  else if (e.target.id === 'sVol') { setSound({ volume: Number(e.target.value) }); play('chip'); }
+  else if (e.target.id === 'sAnim') {
+    animMode = e.target.value;
+    try { localStorage.setItem('tc-anim', JSON.stringify(animMode)); } catch { /* private window */ }
   }
 });
 

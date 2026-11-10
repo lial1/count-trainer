@@ -74,6 +74,8 @@ test('double and split take money from the stack and settle right', () => {
   g.act('a', 'double');
   assert.equal(g.player('a').stack, 170);
   g.act('a', 'stand');
+  assert.equal(g.phase, 'peel'); // the doubled hand's card is still face down
+  g.peel('a', 0);
   assert.equal(g.phase, 'betting');
   assert.equal(g.player('a').lastNet, 30);
   assert.equal(g.player('a').stack, 230);
@@ -116,8 +118,8 @@ test('random play: money always adds up', () => {
   g.join('a', 'A', 1000); g.join('b', 'B', 1000); g.join('c', 'C', 1000);
   let played = 0;
   // Add up every round's results as they settle, then check the bank's books match.
-  const settle = g.settle.bind(g);
-  g.settle = () => { settle(); played += g.players.reduce((n, p) => n + (p.hands.length ? p.lastNet : 0), 0); };
+  const payout = g.payout.bind(g);
+  g.payout = () => { payout(); played += g.players.reduce((n, p) => n + (p.hands.length ? p.lastNet : 0), 0); };
   for (let i = 0; i < 3000; i += 1) {
     for (const p of g.players) {
       if (g.phase !== 'betting') break;
@@ -126,6 +128,7 @@ test('random play: money always adds up', () => {
     }
     if (g.phase === 'betting' && g.players.some((p) => p.status === 'bet')) g.dealNow();
     while (g.inRound) {
+      if (g.phase === 'peel') { for (const p of g.players) p.hands.forEach((h, i) => { if (h.down) g.peel(p.pid, i); }); continue; }
       if (g.phase === 'insurance') { for (const p of g.players) if (p.hands.length && p.ins === null) g.insurance(p.pid, rng() < 0.3 && p.stack >= p.hands[0].bet / 2); continue; }
       const moves = g.legal(g.turn.pid);
       g.act(g.turn.pid, moves[Math.floor(rng() * moves.length)]);
@@ -150,4 +153,49 @@ test('seats and buy-ins wait for the bank', () => {
   g.deny(g.requests[0].id);
   assert.equal(g.player('b').stack, 100);
   assert.throws(() => g.request('c', 'max', 50), /already/);
+});
+
+test('a double is dealt face down until peeled or settled', () => {
+  const g = table();
+  g.join('b', 'Max', 100);
+  // Sam 6,5 (11) vs dealer 10, hole 7. Max 10,8. Sam doubles and gets a 9 face down.
+  rig(g, ['6', '10', '10', '5', '8', '7', '9']);
+  g.bet('a', 10);
+  g.bet('b', 10);
+  g.act('a', 'double');
+  const card = g.view().players[0].hands[0].cards[2];
+  assert.equal(card.hidden, true);
+  assert.equal(card.rank, undefined);
+  g.peel('a', 0);
+  assert.equal(g.view().players[0].hands[0].cards[2].rank, '9');
+  assert.throws(() => g.peel('a', 0));
+  g.act('b', 'stand');
+  assert.equal(g.player('a').lastNet, 20);
+});
+
+test('a busted face-down double still makes the dealer play', () => {
+  const g = table();
+  // Sam 6,6 (12) vs dealer 6, hole 10. Sam doubles, gets a K (bust) face down. Dealer 16 must still draw.
+  rig(g, ['6', '6', '6', '10', 'K', '5']);
+  g.bet('a', 10);
+  g.act('a', 'double');
+  assert.equal(g.dealer.length, 3);
+  assert.equal(g.phase, 'peel');
+  assert.equal(g.view().players[0].hands[0].cards[2].hidden, true);
+  assert.throws(() => g.cashOut('a'), /Finish/);
+  g.peel('a', 0);
+  assert.equal(g.phase, 'betting');
+  assert.equal(g.player('a').lastNet, -20);
+  assert.equal(g.view().players[0].hands[0].cards[2].rank, 'K');
+});
+
+test('the bank can turn over a double nobody peels', () => {
+  const g = table();
+  rig(g, ['6', '10', '5', '7', '9']);
+  g.bet('a', 10);
+  g.act('a', 'double');
+  assert.equal(g.phase, 'peel');
+  g.skip();
+  assert.equal(g.phase, 'betting');
+  assert.equal(g.player('a').lastNet, 20);
 });
