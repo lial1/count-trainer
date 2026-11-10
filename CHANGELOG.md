@@ -1,6 +1,7 @@
 # Changelog
 
 ## 2026-11-10
+- Deck penetration now takes effect right away: changing it moves the cut card in the shoe you are playing, instead of waiting for the next shuffle.
 - Added Home game (table.html, "Play online" in the header): private online blackjack with friends. The host is the bank and sets min bet, max bet, stop loss, decks, penetration and late surrender. Friends open the invite link, enter a name and buy-in, and the bank approves each seat and each rebuy. Players cash out between hands whenever they want. A ledger shows in, out, chips and net, plus who pays whom; the table closes itself when the bank hits the stop loss. Money never goes through the app, settle on Zelle.
 - No server of ours: the bank's browser runs the table and friends connect peer to peer (PeerJS's free broker introduces them). Clients never get the shoe or the hole card. The bank's table is saved in its browser, so a refresh picks the game back up and players reconnect on their own.
 - Added `npm run dev` (static server on 127.0.0.1:4173).

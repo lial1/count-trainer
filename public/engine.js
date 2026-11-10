@@ -201,13 +201,22 @@ export class Game {
         : Number(this.deckMode);
     this.shoe = buildShoe(this.decks, this.rng);
     const total = this.shoe.length;
-    const penetration = this.penMode === 'random' ? 0.7 + this.rng() * 0.1 : Number(this.penMode);
-    this.penetration = penetration;
-    this.cutRemaining = Math.max(10, Math.round(total * (1 - penetration)));
+    this.placeCut(total);
     this.rc = 0;
     this.shoeId = (this.shoeId ?? 0) + 1;
     this.resetTable();
     this.phase = 'ready';
+  }
+
+  // Moves the cut card in the current shoe, so a new penetration setting applies right away.
+  placeCut(total = this.decks * 52) {
+    this.penetration = this.penMode === 'random' ? 0.7 + this.rng() * 0.1 : Number(this.penMode);
+    this.cutRemaining = Math.max(10, Math.round(total * (1 - this.penetration)));
+  }
+
+  setPenetration(mode) {
+    this.penMode = mode;
+    this.placeCut();
   }
 
   resetTable() {

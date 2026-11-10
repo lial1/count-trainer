@@ -461,7 +461,11 @@ document.addEventListener('submit', (e) => {
 document.addEventListener('change', (e) => {
   const { id, value, checked } = e.target;
   if (id === 'setDecks') settings.deckMode = value === 'random' ? value : Number(value);
-  else if (id === 'setPen') settings.penMode = value === 'random' ? value : Number(value);
+  else if (id === 'setPen') {
+    settings.penMode = value === 'random' ? value : Number(value);
+    game.setPenetration(settings.penMode);
+    render();
+  }
   else if (id === 'setEvery') settings.every = Number(value);
   else if (id === 'setSurrender') { settings.surrender = checked; renderControls(); }
   else if (id === 'setDrillTrue') { settings.drillTrue = checked; save(); renderDrill(); return; }

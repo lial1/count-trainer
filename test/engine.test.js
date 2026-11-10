@@ -219,3 +219,10 @@ test('fixed penetration sets the cut card', () => {
     assert.ok(r.penetration >= 0.7 && r.penetration <= 0.8);
   }
 });
+
+test('changing penetration moves the cut card in the current shoe', () => {
+  const g = new Game({ deckMode: 6, penMode: 0.75 });
+  g.setPenetration(0.5);
+  assert.equal(g.cutRemaining, 156);
+  assert.equal(g.decks, 6);
+});
