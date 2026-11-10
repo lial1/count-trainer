@@ -443,7 +443,7 @@ function statusCore(v) {
 }
 
 function feltSignature(v) {
-  return JSON.stringify([v.round, v.phase, v.dealer, v.turn, v.online, v.cfg.minBet, v.cfg.maxBet,
+  return JSON.stringify([v.round, v.phase, v.paused, v.closeAfter, v.closed, v.dealer, v.turn, v.online, v.cfg.minBet, v.cfg.maxBet,
     v.players.map((p) => [p.pid, p.name, p.stack, p.status, p.wager, p.ins, p.insNet, p.hands])]);
 }
 
@@ -488,6 +488,26 @@ function renderFelt(v) {
   $('tray').innerHTML = `<div class="tray-box"><div class="tray-fill" style="height:${Math.min(100, (v.discarded / total) * 100)}%"></div>${ticks}</div><span>Discards</span>`;
   $('shoe').innerHTML = `${v.decks} deck shoe<br><span style="font:500 12px var(--sans);opacity:.8">Bets ${money(v.cfg.minBet)} to ${money(v.cfg.maxBet)}</span>`;
   roundSounds(v);
+  tableNotice(v);
+}
+
+// A sign on the felt when the bank pauses or the table is on its last hand, with a chime when it changes.
+function tableNotice(v) {
+  const text = v.closed ? '' : v.closeAfter ? 'Last hand' : v.paused ? 'Paused' : '';
+  const sub = v.closeAfter ? 'The table closes after this hand.' : v.paused ? `${esc(v.cfg.bankName)} paused the game.` : '';
+  let el = $('notice');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'notice';
+    el.className = 'notice';
+    el.setAttribute('role', 'status');
+    document.querySelector('.felt').appendChild(el);
+  }
+  el.hidden = !text;
+  el.innerHTML = text ? `<b>${text}</b><span>${sub}</span>` : '';
+  if (S.noticePrimed && text && text !== S.noticeText) play('turn');
+  S.noticeText = text;
+  S.noticePrimed = true;
 }
 
 // One result sound per hand, after the cards land, and a ping when it becomes your turn.
