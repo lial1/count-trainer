@@ -286,7 +286,7 @@ function planFelt(v) {
   if (animMode === 'off') {
     for (const e of events) S.peeling.delete(e.key);
     S.squeeze = null;
-    play(events.some((e) => e.kind !== 'deal') ? 'flip' : 'deal');
+    play(events.some((e) => e.kind !== 'deal') ? 'reveal' : 'deal');
     S.lateAt = 0;
     return;
   }
@@ -296,8 +296,8 @@ function planFelt(v) {
   for (const e of events) {
     S.anim.set(e.key, { kind: e.kind, at: now + t });
     if (e.kind === 'deal') { play('deal', t); t += stagger; }
-    else if (e.kind === 'peel') { play('peel', t); play('flip', t + PEEL_MS * 0.78); t += PEEL_MS + 80; }
-    else { play('flip', t + 120); t += QUICK_MS; if (S.squeeze === e.key) S.squeeze = null; }
+    else if (e.kind === 'peel') { play('peel', t); play('reveal', t + PEEL_MS * 0.7); t += PEEL_MS + 80; }
+    else { play('reveal', t + 80); t += QUICK_MS; if (S.squeeze === e.key) S.squeeze = null; }
     S.peeling.delete(e.key);
   }
   S.lateAt = now + t;
@@ -402,7 +402,7 @@ function renderTop() {
     : S.role === 'bank' && S.view?.closed ? '<button class="ghost" id="newTable">New game</button>' : '';
   $('topActions').innerHTML = `<span class="ghost" style="border:0"><span class="dot ${dot}"></span>${label}</span>
     <span class="code" title="Table code">${esc(S.code)}</span>
-    <button class="ghost" id="copyInvite">Copy invite link</button><button class="ghost" id="openSettings">Settings</button>${bankBtns}`;
+    <button class="ghost" id="copyInvite"><span class="long">Copy invite link</span><span class="short">Invite</span></button><button class="ghost" id="openSettings">Settings</button>${bankBtns}`;
 }
 
 function statusLine(v) {
@@ -498,7 +498,23 @@ function renderFelt(v) {
   $('shoe').innerHTML = `${v.decks} deck shoe<br><span style="font:500 12px var(--sans);opacity:.8">Bets ${money(v.cfg.minBet)} to ${money(v.cfg.maxBet)}</span>`;
   roundSounds(v);
   tableNotice(v);
+  fitSeats();
 }
+
+// A seat with splits or a sideways double can be wider than its spot on a small phone.
+// Shrink just that seat's cards until they fit, so nothing spills into the next seat.
+function fitSeats() {
+  for (const seat of document.querySelectorAll('.seat:not(.empty)')) {
+    const hands = seat.querySelector('.hands');
+    hands.style.transform = '';
+    const parts = [...hands.querySelectorAll('.card, .side, .meta')].map((el) => el.getBoundingClientRect()).filter((b) => b.width);
+    if (!parts.length) continue;
+    const need = Math.max(...parts.map((b) => b.right)) - Math.min(...parts.map((b) => b.left));
+    const have = seat.clientWidth - 4;
+    if (need > have) hands.style.transform = `scale(${(have / need).toFixed(3)})`;
+  }
+}
+window.addEventListener('resize', fitSeats);
 
 // A sign on the felt when the bank pauses or the table is on its last hand, with a chime when it changes.
 function tableNotice(v) {

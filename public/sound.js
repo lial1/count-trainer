@@ -80,11 +80,27 @@ function tone(t, freq, dur, gain, type = 'sine') {
   o.stop(t + dur + 0.02);
 }
 
+function sweep(t, from, to, dur, gain) {
+  const o = ctx.createOscillator();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(from, t);
+  o.frequency.exponentialRampToValueAtTime(to, t + dur);
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + dur * 0.6);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.05);
+  o.connect(g).connect(master);
+  o.start(t);
+  o.stop(t + dur + 0.08);
+}
+
 const SOUNDS = {
   // A card sliding off the shoe.
   deal(t) { noise(t, 0.09, 2600, 0.8, 0.5); },
-  // Paper bending as a card is peeled.
-  peel(t) { noise(t, 0.35, 1400, 2.5, 0.12); },
+  // Game-style build-up while a card is peeled: a soft tone sliding up.
+  peel(t) { sweep(t, 330, 660, 0.42, 0.07); sweep(t + 0.02, 495, 990, 0.42, 0.035); },
+  // The sting when the card shows.
+  reveal(t) { tone(t, 1046, 0.22, 0.09); tone(t, 1568, 0.18, 0.05); tone(t + 0.06, 2093, 0.16, 0.03); },
   // The card snapping over.
   flip(t) { noise(t, 0.05, 3400, 1.2, 0.45); },
   chip(t) { tone(t, 2200, 0.05, 0.12, 'triangle'); tone(t + 0.045, 1900, 0.06, 0.1, 'triangle'); },

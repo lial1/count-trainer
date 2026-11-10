@@ -38,7 +38,7 @@ select.in { appearance: auto; }
 .seat { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 6px 2px; border-radius: 12px; border: 1px solid transparent; transform: translateY(calc(var(--lift, 0) * -70px)); }
 .seat.turn { border-color: var(--brass); background: rgba(220,183,101,.08); }
 .seat.me .name { color: var(--brass); }
-.seat .hands { display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: calc(var(--cw) * 1.4 + 34px); }
+.seat .hands { display: flex; gap: 4px; align-items: flex-end; justify-content: center; height: calc(var(--cw) * 1.4 + 34px); transform-origin: 50% 100%; }
 .seat .hand { padding: 2px; gap: 4px; }
 .seat .hand + .hand { margin-left: calc(var(--cw) * -.2); }
 .seat .hand .card + .card { margin-left: calc(var(--cw) * -.68); }
@@ -77,12 +77,26 @@ select.in { appearance: auto; }
 
 @media (max-width: 560px) {
   .seats { left: 1%; right: 1%; bottom: 5%; }
-  .seats-1, .seats-2 { --base: 46px; }
-  .seats-3, .seats-4 { --base: 34px; }
-  .seats-5, .seats-6 { --base: 26px; }
+  .seats-1, .seats-2 { --base: 50px; }
+  .seats-3, .seats-4 { --base: 40px; }
+  .seats-5, .seats-6 { --base: 30px; }
   .seat { transform: translateY(calc(var(--lift, 0) * -40px)); }
   .seat .name { font-size: 12px; }
-  .felt { height: clamp(430px, 62vh, 560px); }
+  /* Short enough that the table, the status line and your buttons fit on one phone screen. */
+  .felt { height: clamp(360px, 50vh, 470px); padding-top: 10px; }
+  #dealer { --cw: 44px; }
+  #dealer .card + .card { margin-left: calc(var(--cw) * -.72); }
+  .shoe { font-size: 12px; }
+  .seat .spot { min-width: 28px; height: 28px; padding: 0 4px; font-size: 11px; border-width: 1px; }
+  .seat .total { min-height: 18px; padding: 1px 5px; font-size: 11px; }
+  .seat .result { font-size: 10px; padding: 1px 4px; }
+  .seat .meta { gap: 2px; }
+  .seat.split-2 { --cw: calc(var(--base) * .62); }
+  .seat.split-3, .seat.split-4 { --cw: calc(var(--base) * .42); }
+  .seat .hand + .hand { margin-left: 0; }
+  .seat .hands { gap: 1px; }
+  .status { margin-top: 6px; font-size: 15px; }
+  .controls { padding-top: 8px; min-height: 0; }
   .top h1 .sub { display: none; }
   .betbox .act { flex: 1 1 40%; }
 }
@@ -124,3 +138,14 @@ input[type="range"] { width: 160px; }
 .notice { position: absolute; left: 50%; top: 40%; z-index: 3; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 22px; border-radius: 12px; background: rgba(13,20,18,.82); border: 1px solid var(--brass); box-shadow: 0 8px 24px rgba(0,0,0,.4); text-align: center; animation: fade .25s both; pointer-events: none; }
 .notice b { font: 600 22px var(--serif); color: var(--brass); letter-spacing: .04em; }
 .notice span { font-size: 13px; color: var(--ink); }
+
+.short { display: none; }
+.top-actions { flex-wrap: wrap; justify-content: flex-end; align-items: center; }
+@media (max-width: 560px) {
+  .top { flex-wrap: wrap; row-gap: 8px; padding: 10px 16px 6px; }
+  .top-actions { width: 100%; justify-content: flex-start; gap: 6px; }
+  .top-actions .ghost { padding: 6px 9px; }
+  .code { padding: 5px 8px; font-size: 13px; }
+  .long { display: none; }
+  .short { display: inline; }
+}

@@ -1,6 +1,8 @@
 # Changelog
 
 ## 2026-11-10
+- Phone pass: the bank's top bar overflowed a 390px screen (475px wide); it now wraps onto its own row with short labels. The table is shorter on phones so table, status and buttons fit on one screen. Bigger phone cards, tighter dealer fan, smaller chips and totals in seats. Each seat shrinks its own cards to fit when splits or a sideways double would spill into the next seat. An automated overlap check (seats, dealer, tray, shoe, notice, chips, totals, results, sideways scroll) passed at 360, 390 and 430px with 6 players, a 3-way split, a double and a 6-card dealer hand, and over 10 live hands at 390px.
+- Peel sound is now a game effect (soft rising build-up, then a reveal sting) instead of a card noise.
 - Fixed table layout: the felt keeps one height and seats sit in fixed spots along the bottom curve (empty seats show as rings), so nothing moves as people bet. Cards shrink with more players and inside a seat that split. Checked with 6 players mid-hand at desktop and phone width.
 - Max players (1 to 6, default 4) in the new-game form and Limits. Lowering it never unseats anyone.
 - Pause flow: ⏸ Pause mid-hand warns everyone ("⏸ Pausing after this hand") and pauses once the hand is paid. While paused the bank gets ▶ Resume or Close and settle up (tap twice). Close is no longer in the top bar, so the table only closes from a pause.
